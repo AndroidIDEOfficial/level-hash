@@ -21,13 +21,13 @@ use std::path::Path;
 
 use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
+use crate::level_io::LevelHashIO;
 use crate::level_io::LEVEL_KEYMAP_VERSION;
 use crate::level_io::LEVEL_VALUES_VERSION;
-use crate::level_io::LevelHashIO;
 use crate::level_io::VALUES_SEGMENT_SIZE_DEFAULT;
 use crate::size::SIZE_U32;
-use crate::size::SIZE_U8;
 use crate::size::SIZE_U64;
+use crate::size::SIZE_U8;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
@@ -36,15 +36,12 @@ pub struct MetaIO {
 }
 
 impl MetaIO {
-    pub fn new(
-        path: &Path,
-        level_size: u8,
-        bucket_size: u8,
-    ) -> MetaIO {
+    pub fn new(path: &Path, level_size: u8, bucket_size: u8) -> MetaIO {
         init_sparse_file(path, None);
 
         let file = file_open_or_panic(path, true, true, false);
-        file.set_len(Self::META__SIZE_BYTES).expect("Failed to set length of file");
+        file.set_len(Self::META__SIZE_BYTES)
+            .expect("Failed to set length of file");
 
         let mmap = MappedFile::new(file, Self::VAL__VERSION__OFFSET, Self::META__SIZE_BYTES);
         let mut meta = MetaIO { file: mmap };
@@ -53,7 +50,7 @@ impl MetaIO {
             meta.set_val_version(LEVEL_VALUES_VERSION);
         }
 
-        if meta.km_version()== 0 {
+        if meta.km_version() == 0 {
             meta.set_km_version(LEVEL_KEYMAP_VERSION);
         }
 
@@ -82,10 +79,11 @@ impl MetaIO {
 }
 
 impl MetaIO {
-
     #[inline]
     fn seek(&mut self, offset: OffT) {
-        self.file.seek(SeekFrom::Start(offset as u64)).expect(&format!("Failed to seek to offset {}", offset));
+        self.file
+            .seek(SeekFrom::Start(offset as u64))
+            .expect(&format!("Failed to seek to offset {}", offset));
     }
 
     fn write(&mut self, offset: OffT, value: u8) {
@@ -197,7 +195,9 @@ impl MetaIO {
     }
 
     pub fn km_size(&mut self) -> OffT {
-        let l0_bytes = (1u64 << self.km_level_size()) * self.km_bucket_size() as u64 * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
+        let l0_bytes = (1u64 << self.km_level_size())
+            * self.km_bucket_size() as u64
+            * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
         let mut size = self.km_start_addr();
         size += l0_bytes;
         size += l0_bytes >> 1;
@@ -209,25 +209,32 @@ impl MetaIO {
     pub const VAL__VERSION__OFFSET: OffT = 0;
     pub const VAL__VERSION__SIZE_BYTES: OffT = SIZE_U32;
 
-    pub const KM__VERSION__OFFSET: OffT = Self::VAL__VERSION__OFFSET + Self::VAL__VERSION__SIZE_BYTES;
+    pub const KM__VERSION__OFFSET: OffT =
+        Self::VAL__VERSION__OFFSET + Self::VAL__VERSION__SIZE_BYTES;
     pub const KM__VERSION__SIZE_BYTES: OffT = SIZE_U32;
 
-    pub const VAL__HEAD_ADDR__OFFSET: OffT = Self::KM__VERSION__OFFSET + Self::KM__VERSION__SIZE_BYTES;
+    pub const VAL__HEAD_ADDR__OFFSET: OffT =
+        Self::KM__VERSION__OFFSET + Self::KM__VERSION__SIZE_BYTES;
     pub const VAL__HEAD_ADDR__SIZE_BYTES: OffT = SIZE_U64;
 
-    pub const VAL__TAIL_ADDR__OFFSET: OffT = Self::VAL__HEAD_ADDR__OFFSET + Self::VAL__HEAD_ADDR__SIZE_BYTES;
+    pub const VAL__TAIL_ADDR__OFFSET: OffT =
+        Self::VAL__HEAD_ADDR__OFFSET + Self::VAL__HEAD_ADDR__SIZE_BYTES;
     pub const VAL__TAIL_ADDR__SIZE_BYTES: OffT = SIZE_U64;
 
-    pub const VAL__VAL_SIZE__OFFSET: OffT = Self::VAL__TAIL_ADDR__OFFSET + Self::VAL__TAIL_ADDR__SIZE_BYTES;
+    pub const VAL__VAL_SIZE__OFFSET: OffT =
+        Self::VAL__TAIL_ADDR__OFFSET + Self::VAL__TAIL_ADDR__SIZE_BYTES;
     pub const VAL__VAL_SIZE__SIZE_BYTES: OffT = SIZE_U64;
 
-    pub const KM__LEVEL_SIZE__OFFSET: OffT = Self::VAL__VAL_SIZE__OFFSET + Self::VAL__VAL_SIZE__SIZE_BYTES;
+    pub const KM__LEVEL_SIZE__OFFSET: OffT =
+        Self::VAL__VAL_SIZE__OFFSET + Self::VAL__VAL_SIZE__SIZE_BYTES;
     pub const KM__LEVEL_SIZE__SIZE_BYTES: OffT = SIZE_U8;
 
-    pub const KM__BUCKET_SIZE__OFFSET: OffT = Self::KM__LEVEL_SIZE__OFFSET + Self::KM__LEVEL_SIZE__SIZE_BYTES;
+    pub const KM__BUCKET_SIZE__OFFSET: OffT =
+        Self::KM__LEVEL_SIZE__OFFSET + Self::KM__LEVEL_SIZE__SIZE_BYTES;
     pub const KM__BUCKET_SIZE__SIZE_BYTES: OffT = SIZE_U8;
 
-    pub const KM__L0_ADDR__OFFSET: OffT = Self::KM__BUCKET_SIZE__OFFSET + Self::KM__BUCKET_SIZE__SIZE_BYTES;
+    pub const KM__L0_ADDR__OFFSET: OffT =
+        Self::KM__BUCKET_SIZE__OFFSET + Self::KM__BUCKET_SIZE__SIZE_BYTES;
     pub const KM__L0_ADDR__SIZE_BYTES: OffT = SIZE_U64;
 
     pub const KM__L1_ADDR__OFFSET: OffT = Self::KM__L0_ADDR__OFFSET + Self::KM__L0_ADDR__SIZE_BYTES;
@@ -239,7 +246,7 @@ impl MetaIO {
      * The size of the meta file in bytes.
      */
     // Offset of the last field + its size
-    const META__SIZE_BYTES: OffT = Self::KM__L1_ADDR__OFFSET + Self::KM__L1_ADDR__SIZE_BYTES ;
+    const META__SIZE_BYTES: OffT = Self::KM__L1_ADDR__OFFSET + Self::KM__L1_ADDR__SIZE_BYTES;
 }
 
 #[cfg(test)]
@@ -272,7 +279,12 @@ mod tests {
         assert_eq!(io.km_level_size(), LEVEL_SIZE_DEFAULT);
         assert_eq!(io.km_bucket_size(), BUCKET_SIZE_DEFAULT);
         assert_eq!(io.km_l0_addr(), 0);
-        assert_eq!(io.km_l1_addr(), (1u64 << LEVEL_SIZE_DEFAULT) * BUCKET_SIZE_DEFAULT as u64 * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES);
+        assert_eq!(
+            io.km_l1_addr(),
+            (1u64 << LEVEL_SIZE_DEFAULT)
+                * BUCKET_SIZE_DEFAULT as u64
+                * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES
+        );
     }
 
     #[test]
@@ -301,7 +313,12 @@ mod tests {
             // The levels are NOT moved when the fields in the meta file are updated (as expected)
             // therefore, these fields must still have the default values
             assert_eq!(io.km_l0_addr(), 0);
-            assert_eq!(io.km_l1_addr(), (1u64 << LEVEL_SIZE_DEFAULT) * BUCKET_SIZE_DEFAULT as u64 * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES);
+            assert_eq!(
+                io.km_l1_addr(),
+                (1u64 << LEVEL_SIZE_DEFAULT)
+                    * BUCKET_SIZE_DEFAULT as u64
+                    * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES
+            );
         }
     }
 }

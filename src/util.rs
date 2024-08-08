@@ -17,17 +17,12 @@
 use std::fs::File;
 use std::path::Path;
 
-use rand::RngCore;
 use rand::rngs::StdRng;
+use rand::RngCore;
 use rand::SeedableRng;
 
 /// Open the file in read-write mode, or panic.
-pub(crate) fn file_open_or_panic(
-    path: &Path,
-    read: bool,
-    write: bool,
-    create: bool,
-) -> File {
+pub(crate) fn file_open_or_panic(path: &Path, read: bool, write: bool, create: bool) -> File {
     let file = File::options()
         .read(read)
         .write(write)
@@ -54,7 +49,7 @@ pub fn generate_seeds() -> (u64, u64) {
         sseed = sseed << (rand.next_u64() % 63);
 
         if fseed != sseed {
-            break
+            break;
         }
     }
 

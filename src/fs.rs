@@ -30,10 +30,7 @@ use crate::size::SIZE_U64;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
-pub(crate) fn init_sparse_file(
-    path: &Path,
-    magic_number: Option<u64>
-) {
+pub(crate) fn init_sparse_file(path: &Path, magic_number: Option<u64>) {
     if !path.exists() {
         write_magic_path(path, magic_number);
         return;
@@ -69,7 +66,11 @@ fn write_magic_path(path: &Path, magic_number: Option<u64>) {
         path.parent().map(|p| create_dir_all(p));
         File::create_new(path)
     } else {
-        OpenOptions::new().read(true).write(true).create(true).open(path)
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
     };
 
     let mut file = match file {
@@ -83,7 +84,8 @@ fn write_magic_path(path: &Path, magic_number: Option<u64>) {
 fn write_magic_file(file: &mut File, magic_number: Option<u64>) {
     if let Some(magic) = magic_number {
         file.seek(SeekFrom::Start(0)).expect("couldn't seek file");
-        file.write_u64::<byteorder::BigEndian>(magic).expect("couldn't write magic number");
+        file.write_u64::<byteorder::BigEndian>(magic)
+            .expect("couldn't write magic number");
     }
 }
 
@@ -114,11 +116,15 @@ pub(crate) fn fallocate_safe(fd: libc::c_int, mode: libc::c_int, offset: OffT, l
 
 #[inline]
 pub(crate) fn fallocate_safe_punch(fd: libc::c_int, offset: OffT, len: OffT) {
-    fallocate_safe(fd, libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE, offset, len);
+    fallocate_safe(
+        fd,
+        libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
+        offset,
+        len,
+    );
 }
 
 #[inline]
 pub(crate) fn fallocate_safe_punch_file(file: &File, offset: OffT, len: OffT) {
     fallocate_safe_punch(file.as_raw_fd(), offset, len);
 }
-

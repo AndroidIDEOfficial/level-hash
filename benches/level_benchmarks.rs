@@ -19,12 +19,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use criterion::black_box;
-use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
+use criterion::Criterion;
 
-use level_hash::LevelHash;
 use level_hash::util::generate_seeds;
+use level_hash::LevelHash;
 
 fn create_level_hash(
     name: &str,
@@ -42,12 +42,10 @@ fn create_level_hash(
     let (s1, s2) = generate_seeds();
 
     let mut options = LevelHash::options();
-        options.index_dir(index_dir)
-        .index_name(name)
-        .seeds(s1, s2);
-    
+    options.index_dir(index_dir).index_name(name).seeds(s1, s2);
+
     conf(&mut options);
-    
+
     options.build()
 }
 

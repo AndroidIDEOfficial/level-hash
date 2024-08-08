@@ -1,16 +1,16 @@
 /*
  *  This file is part of AndroidIDE.
- *  
+ *
  *  AndroidIDE is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation, either version 3 of the License, or
  *  (at your option) any later version.
- *  
+ *
  *  AndroidIDE is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *  
+ *
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
@@ -22,12 +22,12 @@ use highway::HighwayHash;
 use highway::HighwayHasher;
 use highway::Key;
 
-use crate::Level::L0;
-use crate::Level::L1;
 use crate::level_hash::ResizeState::NotResizing;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValuesEntry;
 use crate::log::loge;
+use crate::Level::L0;
+use crate::Level::L1;
 use crate::ResizeState::Expanding;
 
 pub const LEVEL_SIZE_DEFAULT: u8 = 8;
@@ -109,13 +109,21 @@ impl LevelHashOptions {
     }
 
     pub fn level_size(&mut self, size: u8) -> &mut Self {
-        assert!(size <= LEVEL_SIZE_MAX, "Level size must be <= {}", LEVEL_SIZE_MAX);
+        assert!(
+            size <= LEVEL_SIZE_MAX,
+            "Level size must be <= {}",
+            LEVEL_SIZE_MAX
+        );
         self.level_size = size;
         self
     }
 
     pub fn bucket_size(&mut self, size: u8) -> &mut Self {
-        assert!(size <= BUCKET_SIZE_MAX, "Bucket size must be <= {}", BUCKET_SIZE_MAX);
+        assert!(
+            size <= BUCKET_SIZE_MAX,
+            "Bucket size must be <= {}",
+            BUCKET_SIZE_MAX
+        );
         self.bucket_size = size;
         self
     }
@@ -153,8 +161,14 @@ impl LevelHashOptions {
     }
 
     pub fn build(&mut self) -> LevelHash {
-        let index_dir = self.index_dir.take().expect("Index directory must be specified");
-        let index_name = self.index_name.take().expect("Index name must be specified");
+        let index_dir = self
+            .index_dir
+            .take()
+            .expect("Index directory must be specified");
+        let index_name = self
+            .index_name
+            .take()
+            .expect("Index name must be specified");
         let seeds = self.seeds.take().expect("Seeds must be specified");
         LevelHash::new(
             &index_dir,
@@ -233,11 +247,11 @@ impl LevelHash {
 
     #[inline]
     fn shash(&self, key: &[u8]) -> u64 {
-        return Self::__hash(self.seed_2, key)
+        return Self::__hash(self.seed_2, key);
     }
 
     fn __hash(seed: u64, data: &[u8]) -> u64 {
-        let mut hasher = HighwayHasher::new(Key([seed, seed -16, seed - 32, seed - 64]));
+        let mut hasher = HighwayHasher::new(Key([seed, seed - 16, seed - 32, seed - 64]));
         hasher.write(data).unwrap();
         return hasher.finalize64();
     }
@@ -260,15 +274,19 @@ impl LevelHash {
     fn entry_at(&mut self, level: Level, bucket: u32, slot: u8) -> Option<ValuesEntry> {
         return self.io.val_entry_for_slot(level as u8, bucket, slot);
     }
-    
-    fn cmp_key_and_get_entry(&mut self, level: Level, bucket: u32, slot: u8, key: &[u8]) -> Option<ValuesEntry> {
-        return self.entry_at(level, bucket, slot)
-            .take_if(|e| {
-                (e.entry_size(&mut self.io.values) > 0)
-                    .then(|| {
-                        e.key(&mut self.io.values).is_some_and(|k| k == key)
-                    }).unwrap_or(false)
-            });
+
+    fn cmp_key_and_get_entry(
+        &mut self,
+        level: Level,
+        bucket: u32,
+        slot: u8,
+        key: &[u8],
+    ) -> Option<ValuesEntry> {
+        return self.entry_at(level, bucket, slot).take_if(|e| {
+            (e.entry_size(&mut self.io.values) > 0)
+                .then(|| e.key(&mut self.io.values).is_some_and(|k| k == key))
+                .unwrap_or(false)
+        });
     }
 
     fn insert_entry_at_slot(
@@ -296,7 +314,10 @@ impl LevelHash {
         }
 
         // check for duplicate key
-        assert!(!fail_on_dup || !entry.key(&mut self.io.values).is_some_and(|k| k == key), "key already exists");
+        assert!(
+            !fail_on_dup || !entry.key(&mut self.io.values).is_some_and(|k| k == key),
+            "key already exists"
+        );
 
         return false;
     }
@@ -323,7 +344,8 @@ impl LevelHash {
 
             for j in 0..bucket_size {
                 if self.insert_entry_at_slot(level as u8, jidx, j, &this_key, &this_value, false) {
-                    self.io.create_or_update_entry(level as u8, bucket, i, key, value);
+                    self.io
+                        .create_or_update_entry(level as u8, bucket, i, key, value);
                     self.item_counts[level as usize] += 1;
                     return true;
                 }
@@ -337,16 +359,30 @@ impl LevelHash {
         for i in 0u8..bucket_size {
             let bottom_entry = self.io.val_entry_for_slot(L1 as u8, bucket, i).unwrap();
             let bottom_entry_key = bottom_entry.key(&mut self.io.values).unwrap();
-            let bottom_entry_value = bottom_entry.key(&mut self.io.values).unwrap_or(vec![0u8; 0]);
+            let bottom_entry_value = bottom_entry
+                .key(&mut self.io.values)
+                .unwrap_or(vec![0u8; 0]);
             let fhash = self.fhash(&bottom_entry_key);
             let shash = self.shash(&bottom_entry_key);
             let fidx = self.buck_idx_lvl(fhash, L0);
             let sidx = self.buck_idx_lvl(shash, L0);
 
             for j in 0..bucket_size {
-                if self.insert_entry_at_slot(L0 as u8, fidx, j, &bottom_entry_key, &bottom_entry_value, false)
-                    || self.insert_entry_at_slot(L0 as u8, sidx, j, &bottom_entry_key, &bottom_entry_value, false) {
-
+                if self.insert_entry_at_slot(
+                    L0 as u8,
+                    fidx,
+                    j,
+                    &bottom_entry_key,
+                    &bottom_entry_value,
+                    false,
+                ) || self.insert_entry_at_slot(
+                    L0 as u8,
+                    sidx,
+                    j,
+                    &bottom_entry_key,
+                    &bottom_entry_value,
+                    false,
+                ) {
                     // we could delete the bottom_entry here, but we don't,
                     // this is because we can simply provide the bottom entry to the caller
                     // and let it decide where the bottom_entry can be reused
@@ -369,13 +405,16 @@ impl LevelHash {
 
         let bucket_size = self.io.meta.km_bucket_size();
 
-        for old_buck_idx in 0 .. (self.top_level_bucket_count() >> 1) {
-            for old_slot_idx in 0 .. bucket_size {
+        for old_buck_idx in 0..(self.top_level_bucket_count() >> 1) {
+            for old_slot_idx in 0..bucket_size {
                 if !self.io.is_occupied(L1 as u8, old_buck_idx, old_slot_idx) {
-                    continue
+                    continue;
                 }
 
-                let entry = self.io.val_entry_for_slot(L1 as u8, old_buck_idx, old_slot_idx).unwrap();
+                let entry = self
+                    .io
+                    .val_entry_for_slot(L1 as u8, old_buck_idx, old_slot_idx)
+                    .unwrap();
                 let key = entry.key(&mut self.io.values).unwrap();
                 let fhash = self.fhash(&key);
                 let shash = self.shash(&key);
@@ -384,12 +423,23 @@ impl LevelHash {
                 let sidx = Self::buck_idx_cap(shash, new_top_level_capacity);
 
                 let mut insert_success = false;
-                for new_slot_idx in 0 .. bucket_size {
-                    if self.io.move_to_interim(L1 as u8, old_buck_idx, old_slot_idx, fidx, new_slot_idx)
-                    || self.io.move_to_interim(L1 as u8, old_buck_idx, old_slot_idx, sidx, new_slot_idx) {
+                for new_slot_idx in 0..bucket_size {
+                    if self.io.move_to_interim(
+                        L1 as u8,
+                        old_buck_idx,
+                        old_slot_idx,
+                        fidx,
+                        new_slot_idx,
+                    ) || self.io.move_to_interim(
+                        L1 as u8,
+                        old_buck_idx,
+                        old_slot_idx,
+                        sidx,
+                        new_slot_idx,
+                    ) {
                         insert_success = true;
                         new_level_item_count += 1;
-                        break
+                        break;
                     }
                 }
 
@@ -428,9 +478,14 @@ impl LevelHash {
             let sidx = self.buck_idx_lvl(shash, level);
 
             for j in 0..bucket_size {
-                if let Some((e, buck)) = self.cmp_key_and_get_entry(level, fidx, j, key)
+                if let Some((e, buck)) = self
+                    .cmp_key_and_get_entry(level, fidx, j, key)
                     .map(|e| (e, fidx))
-                    .or_else(|| self.cmp_key_and_get_entry(level, sidx, j, key).map(|e| (e, sidx))) {
+                    .or_else(|| {
+                        self.cmp_key_and_get_entry(level, sidx, j, key)
+                            .map(|e| (e, sidx))
+                    })
+                {
                     return Some((e, level as u8, buck, j));
                 }
             }
@@ -440,15 +495,12 @@ impl LevelHash {
     }
 
     pub fn get_value(&mut self, key: &[u8]) -> Option<Vec<u8>> {
-        return self.find_slot(key).and_then(|e| e.0.value(&mut self.io.values));
+        return self
+            .find_slot(key)
+            .and_then(|e| e.0.value(&mut self.io.values));
     }
 
-    pub fn get_value_at(
-        &mut self,
-        level: Level,
-        bucket: u32,
-        slot: u8,
-    ) -> Option<Vec<u8>> {
+    pub fn get_value_at(&mut self, level: Level, bucket: u32, slot: u8) -> Option<Vec<u8>> {
         return self.io.value(level as u8, bucket, slot);
     }
 
@@ -472,7 +524,8 @@ impl LevelHash {
             let sidx = self.buck_idx_lvl(shash, level);
             for j in 0..bucket_size {
                 if self.insert_entry_at_slot(level as u8, fidx, j, key, value, self.unique_keys)
-                    || self.insert_entry_at_slot(level as u8, sidx, j, key, value, self.unique_keys) {
+                    || self.insert_entry_at_slot(level as u8, sidx, j, key, value, self.unique_keys)
+                {
                     self.item_counts[level as usize] += 1;
                     return true;
                 }
@@ -484,7 +537,8 @@ impl LevelHash {
             let sidx = self.buck_idx_lvl(shash, level);
 
             if self.try_movement(level, fidx, bucket_size, key, value)
-                || self.try_movement(level, sidx, bucket_size, key, value) {
+                || self.try_movement(level, sidx, bucket_size, key, value)
+            {
                 return true;
             }
         }
@@ -492,7 +546,8 @@ impl LevelHash {
         if self.expand_count > 0 {
             let fidx = self.buck_idx_lvl(fhash, L0);
             let sidx = self.buck_idx_lvl(shash, L0);
-            let from_pos = self.b2t_movement(fidx, bucket_size)
+            let from_pos = self
+                .b2t_movement(fidx, bucket_size)
                 .map(|slot| (fidx, slot))
                 .or_else(|| {
                     self.b2t_movement(sidx, bucket_size)
@@ -500,7 +555,8 @@ impl LevelHash {
                 });
 
             if let Some((bucket, slot)) = from_pos {
-                self.io.create_or_update_entry(L0 as u8, bucket, slot, key, value);
+                self.io
+                    .create_or_update_entry(L0 as u8, bucket, slot, key, value);
                 self.item_counts[L0 as usize] += 1;
                 return true;
             }
@@ -509,23 +565,23 @@ impl LevelHash {
         false
     }
 
-    pub fn remove(
-        &mut self,
-        key: &[u8],
-    ) -> Option<Vec<u8>> {
-        return self.find_slot(key).and_then(|e| {
-            self.io.delete_at(e.0.addr + 1, Some(key), true)
-        });
+    pub fn remove(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        return self
+            .find_slot(key)
+            .and_then(|e| self.io.delete_at(e.0.addr + 1, Some(key), true));
     }
 
     pub fn update(&mut self, key: &[u8], new_value: &[u8]) -> Option<Vec<u8>> {
-        return self.find_slot(key).and_then(|e| {
-            self.io.update_entry_value(e.1, e.2, e.3, new_value)
-        });
+        return self
+            .find_slot(key)
+            .and_then(|e| self.io.update_entry_value(e.1, e.2, e.3, new_value));
     }
 
     pub fn expand(&mut self) -> bool {
-        assert_eq!(self.resize_state, NotResizing, "cannot expand while resizing");
+        assert_eq!(
+            self.resize_state, NotResizing,
+            "cannot expand while resizing"
+        );
         let level_size = self.io.meta.km_level_size();
         if level_size == LEVEL_SIZE_MAX {
             return false;
@@ -555,12 +611,12 @@ mod test {
     use byteorder::ReadBytesExt;
 
     use crate::level_io::LevelHashIO;
-    use crate::LevelHash;
-    use crate::LevelHashOptions;
     use crate::meta::MetaIO;
     use crate::size::SIZE_U32;
     use crate::size::SIZE_U64;
     use crate::util::generate_seeds;
+    use crate::LevelHash;
+    use crate::LevelHashOptions;
 
     fn create_level_hash(
         name: &str,
@@ -577,9 +633,7 @@ mod test {
 
         let (s1, s2) = generate_seeds();
         let mut options = LevelHash::options();
-        options.index_dir(index_dir)
-            .index_name(name)
-            .seeds(s1, s2);
+        options.index_dir(index_dir).index_name(name).seeds(s1, s2);
 
         conf(&mut options);
 
@@ -588,10 +642,7 @@ mod test {
 
     fn default_level_hash(name: &str) -> LevelHash {
         create_level_hash(name, true, |options| {
-            options
-                .level_size(2)
-                .bucket_size(4)
-                .auto_expand(false);
+            options.level_size(2).bucket_size(4).auto_expand(false);
         })
     }
 
@@ -666,7 +717,10 @@ mod test {
 
         let entry = hash.find_slot(b"k").unwrap();
         assert_eq!(entry.0.key(&mut hash.io.values).unwrap(), b"k".to_vec());
-        assert_eq!(entry.0.value(&mut hash.io.values).unwrap(), b"newV".to_vec());
+        assert_eq!(
+            entry.0.value(&mut hash.io.values).unwrap(),
+            b"newV".to_vec()
+        );
     }
 
     #[test]
@@ -674,31 +728,34 @@ mod test {
         let mut hash = default_level_hash("init-existing");
         hash.insert(b"key", b"value");
         hash.insert(b"null", &[]);
-        hash.insert(b"long", b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        hash.insert(
+            b"long",
+            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        );
 
         assert_eq!(hash.get_value(b"key"), Some(b"value".to_vec()));
         assert_eq!(hash.get_value(b"null"), None);
-        assert_eq!(hash.get_value(b"long"), Some(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()));
+        assert_eq!(
+            hash.get_value(b"long"),
+            Some(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec())
+        );
 
         let mut hash = create_level_hash("init-existing", false, |options| {
-            options
-                .level_size(2)
-                .bucket_size(4)
-                .auto_expand(false);
+            options.level_size(2).bucket_size(4).auto_expand(false);
         });
 
         assert_eq!(hash.get_value(b"key"), Some(b"value".to_vec()));
         assert_eq!(hash.get_value(b"null"), None);
-        assert_eq!(hash.get_value(b"long"), Some(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()));
+        assert_eq!(
+            hash.get_value(b"long"),
+            Some(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec())
+        );
     }
 
     #[test]
     fn level_hash_expand() {
         let mut hash = create_level_hash("expand", true, |options| {
-            options
-                .level_size(5)
-                .bucket_size(10)
-                .auto_expand(false);
+            options.level_size(5).bucket_size(10).auto_expand(false);
         });
 
         let slots = hash.total_slots() - hash.io.meta.km_bucket_size() as u32;
@@ -726,14 +783,14 @@ mod test {
     #[test]
     fn expansion_with_huge_slot_count() {
         let mut hash = create_level_hash("expand-huge-slot-count", true, |options| {
-            options
-                .level_size(15)
-                .bucket_size(4)
-                .auto_expand(false);
+            options.level_size(15).bucket_size(4).auto_expand(false);
         });
 
         let mut i = 0u32;
-        while hash.insert(format!("key{}", i).as_bytes(), format!("value{}", i).as_bytes()) {
+        while hash.insert(
+            format!("key{}", i).as_bytes(),
+            format!("value{}", i).as_bytes(),
+        ) {
             i += 1;
         }
 
@@ -754,13 +811,12 @@ mod test {
     #[test]
     fn meta_after_expand() {
         let mut hash = create_level_hash("meta-after-expand", true, |options| {
-            options
-                .level_size(5)
-                .bucket_size(10)
-                .auto_expand(false);
+            options.level_size(5).bucket_size(10).auto_expand(false);
         });
 
-        let l0_size: u64 = hash.top_level_bucket_count() as u64 * hash.io.meta.km_bucket_size() as u64 * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
+        let l0_size: u64 = hash.top_level_bucket_count() as u64
+            * hash.io.meta.km_bucket_size() as u64
+            * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
 
         assert_eq!(hash.io.meta.km_level_size(), 5);
         assert_eq!(hash.io.meta.km_bucket_size(), 10);
@@ -781,7 +837,7 @@ mod test {
         let mut hash = create_level_hash(file_name, true, |options| {
             options.auto_expand(false);
         });
- 
+
         let entry_size = 34;
 
         for i in 0..10 {
@@ -790,12 +846,18 @@ mod test {
             assert!(hash.insert(&key, &value));
         }
 
-        let index_file = &format!("target/tests/level-hash/index-{}/{}.index", file_name, file_name);
+        let index_file = &format!(
+            "target/tests/level-hash/index-{}/{}.index",
+            file_name, file_name
+        );
         let input = fs::read(&index_file).expect("Unable to read index file");
         let mut input = input.as_slice();
 
         let mut pos = 0u64;
-        assert_eq!(input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+        assert_eq!(
+            input.read_u64::<BigEndian>().unwrap(),
+            LevelHashIO::VALUES_MAGIC_NUMBER
+        );
         pos += SIZE_U64;
 
         let mut prev_entry = 0;
@@ -805,7 +867,10 @@ mod test {
             pos += SIZE_U32;
             assert_eq!(input.read_u64::<BigEndian>().unwrap(), prev_entry);
             pos += SIZE_U64;
-            assert_eq!(input.read_u64::<BigEndian>().unwrap(), p + entry_size as u64 + 4 + 1);
+            assert_eq!(
+                input.read_u64::<BigEndian>().unwrap(),
+                p + entry_size as u64 + 4 + 1
+            );
             pos += SIZE_U64;
             assert_eq!(input.read_u32::<BigEndian>().unwrap(), 4);
             pos += SIZE_U32;
@@ -843,20 +908,39 @@ mod test {
             assert!(hash.insert(&key, &value));
         }
 
-        let index_file = format!("target/tests/level-hash/index-{}/{}.index", file_name, file_name);
-        let meta_file = format!("target/tests/level-hash/index-{}/{}.index._meta", file_name, file_name);
+        let index_file = format!(
+            "target/tests/level-hash/index-{}/{}.index",
+            file_name, file_name
+        );
+        let meta_file = format!(
+            "target/tests/level-hash/index-{}/{}.index._meta",
+            file_name, file_name
+        );
 
         let val_bytes = fs::read(&index_file).expect("Unable to read index file");
         let mut input = val_bytes.as_slice();
-        let mut meta_io = MetaIO::new(Path::new(&meta_file), hash.io.meta.km_level_size(), hash.io.meta.km_bucket_size());
+        let mut meta_io = MetaIO::new(
+            Path::new(&meta_file),
+            hash.io.meta.km_level_size(),
+            hash.io.meta.km_bucket_size(),
+        );
 
         assert_eq!(meta_io.val_head_addr(), 1);
-        assert_eq!(meta_io.val_tail_addr(), ((entry_size as u64 + 4) * (count - 1)) + 1);
+        assert_eq!(
+            meta_io.val_tail_addr(),
+            ((entry_size as u64 + 4) * (count - 1)) + 1
+        );
 
-        assert_eq!(input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+        assert_eq!(
+            input.read_u64::<BigEndian>().unwrap(),
+            LevelHashIO::VALUES_MAGIC_NUMBER
+        );
         assert_eq!(input.read_u32::<BigEndian>().unwrap(), entry_size);
         assert_eq!(input.read_u64::<BigEndian>().unwrap(), 0);
-        assert_eq!(input.read_u64::<BigEndian>().unwrap(), entry_size as u64 + 4 + 1);
+        assert_eq!(
+            input.read_u64::<BigEndian>().unwrap(),
+            entry_size as u64 + 4 + 1
+        );
     }
 
     #[test]
@@ -875,24 +959,46 @@ mod test {
             assert!(hash.insert(&key, &value));
         }
 
-        let index_file = &format!("target/tests/level-hash/index-{}/{}.index", file_name, file_name);
-        let meta_file = &format!("target/tests/level-hash/index-{}/{}.index._meta", file_name, file_name);
+        let index_file = &format!(
+            "target/tests/level-hash/index-{}/{}.index",
+            file_name, file_name
+        );
+        let meta_file = &format!(
+            "target/tests/level-hash/index-{}/{}.index._meta",
+            file_name, file_name
+        );
 
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(Path::new(&meta_file), hash.io.meta.km_level_size(), hash.io.meta.km_bucket_size());
+            let mut meta_io = MetaIO::new(
+                Path::new(&meta_file),
+                hash.io.meta.km_level_size(),
+                hash.io.meta.km_bucket_size(),
+            );
 
             assert_eq!(meta_io.val_head_addr(), 1);
-            assert_eq!(meta_io.val_tail_addr(), ((entry_size + 4) * (count - 1) + 1) as u64);
-            
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+            assert_eq!(
+                meta_io.val_tail_addr(),
+                ((entry_size + 4) * (count - 1) + 1) as u64
+            );
+
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                LevelHashIO::VALUES_MAGIC_NUMBER
+            );
 
             let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 1)) as usize;
             let mut val_input = &val_bytes[pos..];
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), entry_size);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (count as u64 - 2)) + 1);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * count as u64) + 1);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (count as u64 - 2)) + 1
+            );
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * count as u64) + 1
+            );
         }
 
         hash.remove(&format!("key{}", count - 1).as_bytes());
@@ -900,12 +1006,22 @@ mod test {
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(Path::new(&meta_file), hash.io.meta.km_level_size(), hash.io.meta.km_bucket_size());
+            let mut meta_io = MetaIO::new(
+                Path::new(&meta_file),
+                hash.io.meta.km_level_size(),
+                hash.io.meta.km_bucket_size(),
+            );
 
             assert_eq!(meta_io.val_head_addr(), 1);
-            assert_eq!(meta_io.val_tail_addr(), ((entry_size + 4) * (count - 2)) as u64 + 1);
+            assert_eq!(
+                meta_io.val_tail_addr(),
+                ((entry_size + 4) * (count - 2)) as u64 + 1
+            );
 
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                LevelHashIO::VALUES_MAGIC_NUMBER
+            );
 
             let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 1)) as usize;
             let mut val_input = &val_bytes[pos..];
@@ -914,8 +1030,14 @@ mod test {
             let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 2)) as usize;
             let mut val_input = &val_bytes[pos..];
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), entry_size);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (count as u64 - 3)) + 1);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (count as u64 - 1)) + 1);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (count as u64 - 3)) + 1
+            );
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (count as u64 - 1)) + 1
+            );
         }
     }
 
@@ -935,8 +1057,14 @@ mod test {
             assert!(hash.insert(&key, &value));
         }
 
-        let index_file = &format!("target/tests/level-hash/index-{}/{}.index", file_name, file_name);
-        let meta_file = &format!("target/tests/level-hash/index-{}/{}.index._meta", file_name, file_name);
+        let index_file = &format!(
+            "target/tests/level-hash/index-{}/{}.index",
+            file_name, file_name
+        );
+        let meta_file = &format!(
+            "target/tests/level-hash/index-{}/{}.index._meta",
+            file_name, file_name
+        );
 
         // let to_remove_idx = rand::thread_rng().gen_range(2..count - 2);
         let to_remove_idx = 5;
@@ -944,18 +1072,34 @@ mod test {
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(Path::new(&meta_file), hash.io.meta.km_level_size(), hash.io.meta.km_bucket_size());
+            let mut meta_io = MetaIO::new(
+                Path::new(&meta_file),
+                hash.io.meta.km_level_size(),
+                hash.io.meta.km_bucket_size(),
+            );
 
             assert_eq!(meta_io.val_head_addr(), 1);
-            assert_eq!(meta_io.val_tail_addr(), ((entry_size + 4) * (count - 1) + 1) as u64);
+            assert_eq!(
+                meta_io.val_tail_addr(),
+                ((entry_size + 4) * (count - 1) + 1) as u64
+            );
 
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                LevelHashIO::VALUES_MAGIC_NUMBER
+            );
 
             let pos = SIZE_U64 as usize + ((entry_size + 4) * to_remove_idx) as usize;
             let mut val_input = &val_bytes[pos..];
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), entry_size);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx as u64 + 1)) + 1);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1
+            );
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx as u64 + 1)) + 1
+            );
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), 4);
 
             let mut buf = [0u8; 4];
@@ -968,12 +1112,22 @@ mod test {
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(Path::new(&meta_file), hash.io.meta.km_level_size(), hash.io.meta.km_bucket_size());
+            let mut meta_io = MetaIO::new(
+                Path::new(&meta_file),
+                hash.io.meta.km_level_size(),
+                hash.io.meta.km_bucket_size(),
+            );
 
             assert_eq!(meta_io.val_head_addr(), 1);
-            assert_eq!(meta_io.val_tail_addr(), ((entry_size + 4) * (count - 1)) as u64 + 1);
+            assert_eq!(
+                meta_io.val_tail_addr(),
+                ((entry_size + 4) * (count - 1)) as u64 + 1
+            );
 
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), LevelHashIO::VALUES_MAGIC_NUMBER);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                LevelHashIO::VALUES_MAGIC_NUMBER
+            );
 
             let pos = SIZE_U64 as usize + ((entry_size + 4) * to_remove_idx) as usize;
             let mut val_input = &val_bytes[pos..];
@@ -982,8 +1136,14 @@ mod test {
             let pos = SIZE_U64 as usize + ((entry_size + 4) * (to_remove_idx - 1)) as usize;
             let mut val_input = &val_bytes[pos..];
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), entry_size);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx as u64 - 2)) + 1);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx + 1) as u64) + 1);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 2)) + 1
+            );
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx + 1) as u64) + 1
+            );
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), 4);
 
             let mut buf = [0u8; 4];
@@ -993,8 +1153,14 @@ mod test {
             let pos = SIZE_U64 as usize + ((entry_size + 4) * (to_remove_idx + 1)) as usize;
             let mut val_input = &val_bytes[pos..];
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), entry_size);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1);
-            assert_eq!(val_input.read_u64::<BigEndian>().unwrap(), ((entry_size as u64 + 4) * (to_remove_idx as u64 + 2)) + 1);
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1
+            );
+            assert_eq!(
+                val_input.read_u64::<BigEndian>().unwrap(),
+                ((entry_size as u64 + 4) * (to_remove_idx as u64 + 2)) + 1
+            );
             assert_eq!(val_input.read_u32::<BigEndian>().unwrap(), 4);
 
             let mut buf = [0u8; 4];
