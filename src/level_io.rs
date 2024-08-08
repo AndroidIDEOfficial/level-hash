@@ -21,8 +21,6 @@ use std::io::SeekFrom::*;
 use std::io::Write;
 use std::path::Path;
 
-use memmap2::MmapMut;
-use memmap2::RemapOptions;
 
 use crate::fs::ftruncate_safe_file;
 use crate::fs::ftruncate_safe_path;
@@ -261,11 +259,6 @@ impl LevelHashIO {
     #[inline]
     pub(crate) fn km_real_offset(off: OffT) -> OffT {
         Self::KEYMAP_HEADER_SIZE_BYTES + off
-    }
-
-    #[inline]
-    pub(crate) fn km_buf_offset(off: OffT) -> OffT {
-        return off - Self::KEYMAP_HEADER_SIZE_BYTES
     }
 
     #[inline]

@@ -18,7 +18,8 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
-use highway::{HighwayHash, HighwayHasher};
+use highway::HighwayHash;
+use highway::HighwayHasher;
 use highway::Key;
 
 use crate::Level::L0;
@@ -433,11 +434,6 @@ impl LevelHash {
                     return Some((e, level as u8, buck, j));
                 }
             }
-        }
-        
-        for level in levels {
-            let fidx = self.buck_idx_lvl(fhash, level);
-            let sidx = self.buck_idx_lvl(shash, level);
         }
 
         None

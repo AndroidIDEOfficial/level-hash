@@ -113,11 +113,6 @@ pub(crate) fn fallocate_safe(fd: libc::c_int, mode: libc::c_int, offset: OffT, l
 }
 
 #[inline]
-pub(crate) fn fallocate_safe_file(file: &File, mode: libc::c_int, offset: OffT, len: OffT) {
-    fallocate_safe(file.as_raw_fd(), mode, offset, len)
-}
-
-#[inline]
 pub(crate) fn fallocate_safe_punch(fd: libc::c_int, offset: OffT, len: OffT) {
     fallocate_safe(fd, libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE, offset, len);
 }

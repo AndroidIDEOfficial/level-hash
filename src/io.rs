@@ -36,7 +36,6 @@ pub(crate) struct  MappedFile {
     pub(crate) map: MmapMut,
     pub(crate) file: File,
     pub(crate) pos: OffT,
-    pub(crate) off: OffT,
     pub(crate) size: OffT,
 }
 
@@ -66,7 +65,7 @@ impl MappedFile {
             Err(why) => panic!("couldn't map file: {}", why),
         };
 
-        Self { map, file, pos: 0, off, size }
+        Self { map, file, pos: 0, size }
     }
 }
 
@@ -92,11 +91,6 @@ impl MappedFile {
     }
 
     #[inline]
-    pub(crate) fn r_u16(&mut self) -> u16 {
-        return self.read_u16::<byteorder::BigEndian>().unwrap()
-    }
-
-    #[inline]
     pub(crate) fn r_u32(&mut self) -> u32 {
         return self.read_u32::<byteorder::BigEndian>().unwrap()
     }
@@ -109,11 +103,6 @@ impl MappedFile {
     #[inline]
     pub(crate) fn w_u8(&mut self, v: u8) {
         self.write_u8(v).unwrap()
-    }
-
-    #[inline]
-    pub(crate) fn w_u16(&mut self, v: u16) {
-        self.write_u16::<byteorder::BigEndian>(v).unwrap()
     }
 
     #[inline]

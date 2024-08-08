@@ -1,7 +1,6 @@
 pub use level_hash::*;
 pub use util::generate_seeds;
 
-pub(crate) mod jni;
 pub(crate) mod level_io;
 pub(crate) mod io;
 pub(crate) mod types;

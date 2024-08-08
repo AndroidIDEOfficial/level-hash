@@ -233,12 +233,7 @@ impl MetaIO {
     pub const KM__L1_ADDR__OFFSET: OffT = Self::KM__L0_ADDR__OFFSET + Self::KM__L0_ADDR__SIZE_BYTES;
     pub const KM__L1_ADDR__SIZE_BYTES: OffT = SIZE_U64;
 
-    // TODO: The properties below must be updated when a new field is added to the meta file
-
-    /**
-     * The number of fields in the meta file.
-     */
-    const META__FIELD_COUNT: OffT = 9;
+    // TODO: The below property below must be updated when a new field is added to the meta file
 
     /**
      * The size of the meta file in bytes.

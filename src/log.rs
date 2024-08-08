@@ -17,12 +17,6 @@
 
 static LOG_ENABLED: bool = true;
 
-pub(crate) fn logd(msg: &str) {
-    if LOG_ENABLED {
-        println!("{}", msg);
-    }
-}
-
 pub(crate) fn loge(msg: &str) {
     if LOG_ENABLED {
         eprintln!("{}", msg);
