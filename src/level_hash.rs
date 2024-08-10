@@ -159,7 +159,7 @@ impl LevelHashOptions {
 
     pub fn seeds(&mut self, seed_1: u64, seed_2: u64) -> &mut Self {
         assert!(seed_1 > 0, "Seed 1 must be greater than 0");
-        assert!(seed_2 > 0, "Seed 1 must be greater than 0");
+        assert!(seed_2 > 0, "Seed 2 must be greater than 0");
         self.seeds = Some((seed_1, seed_2));
         self
     }
