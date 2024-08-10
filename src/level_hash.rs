@@ -26,6 +26,10 @@ use crate::level_hash::ResizeState::NotResizing;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValuesEntry;
 use crate::log::loge;
+use crate::types::_BucketIdxT;
+use crate::types::_LevelIdxT;
+use crate::types::_SlotIdxT;
+use crate::types::{BucketSizeT, LevelSizeT};
 use crate::Level::L0;
 use crate::Level::L1;
 use crate::ResizeState::Expanding;
@@ -84,8 +88,8 @@ pub struct LevelHash {
 
 /// Options for building a [LevelHash] instance.
 pub struct LevelHashOptions {
-    level_size: u8,
-    bucket_size: u8,
+    level_size: LevelSizeT,
+    bucket_size: BucketSizeT,
     unique_keys: bool,
     auto_expand: bool,
     load_factor_threshold: f32,
@@ -108,7 +112,7 @@ impl LevelHashOptions {
         }
     }
 
-    pub fn level_size(&mut self, size: u8) -> &mut Self {
+    pub fn level_size(&mut self, size: LevelSizeT) -> &mut Self {
         assert!(
             size <= LEVEL_SIZE_MAX,
             "Level size must be <= {}",
@@ -118,7 +122,7 @@ impl LevelHashOptions {
         self
     }
 
-    pub fn bucket_size(&mut self, size: u8) -> &mut Self {
+    pub fn bucket_size(&mut self, size: BucketSizeT) -> &mut Self {
         assert!(
             size <= BUCKET_SIZE_MAX,
             "Bucket size must be <= {}",
@@ -193,8 +197,8 @@ impl LevelHash {
     fn new(
         index_dir: &Path,
         index_name: &str,
-        level_size: u8,
-        bucket_size: u8,
+        level_size: LevelSizeT,
+        bucket_size: BucketSizeT,
         unique_keys: bool,
         auto_expand: bool,
         load_factor_threshold: f32,
@@ -271,15 +275,22 @@ impl LevelHash {
         return (key_hash & (capacity - 1)) as u32;
     }
 
-    fn entry_at(&mut self, level: Level, bucket: u32, slot: u8) -> Option<ValuesEntry> {
-        return self.io.val_entry_for_slot(level as u8, bucket, slot);
+    fn entry_at(
+        &mut self,
+        level: Level,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> Option<ValuesEntry> {
+        return self
+            .io
+            .val_entry_for_slot(level as _LevelIdxT, bucket, slot);
     }
 
     fn cmp_key_and_get_entry(
         &mut self,
         level: Level,
-        bucket: u32,
-        slot: u8,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
         key: &[u8],
     ) -> Option<ValuesEntry> {
         return self.entry_at(level, bucket, slot).take_if(|e| {
@@ -291,9 +302,9 @@ impl LevelHash {
 
     fn insert_entry_at_slot(
         &mut self,
-        level: u8,
-        bucket: u32,
-        slot: u8,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
         key: &[u8],
         value: &[u8],
         fail_on_dup: bool,
@@ -325,13 +336,16 @@ impl LevelHash {
     fn try_movement(
         &mut self,
         level: Level,
-        bucket: u32,
-        bucket_size: u8,
+        bucket: _BucketIdxT,
+        bucket_size: _SlotIdxT,
         key: &[u8],
         value: &[u8],
     ) -> bool {
         for i in 0..bucket_size {
-            let this_entry = self.io.val_entry_for_slot(level as u8, bucket, i).unwrap();
+            let this_entry = self
+                .io
+                .val_entry_for_slot(level as _LevelIdxT, bucket, i)
+                .unwrap();
             let this_key = this_entry.key(&mut self.io.values).unwrap();
             let this_value = this_entry.value(&mut self.io.values).unwrap_or(vec![]);
 
@@ -343,9 +357,16 @@ impl LevelHash {
             let jidx = if fidx == bucket { sidx } else { fidx };
 
             for j in 0..bucket_size {
-                if self.insert_entry_at_slot(level as u8, jidx, j, &this_key, &this_value, false) {
+                if self.insert_entry_at_slot(
+                    level as _LevelIdxT,
+                    jidx,
+                    j,
+                    &this_key,
+                    &this_value,
+                    false,
+                ) {
                     self.io
-                        .create_or_update_entry(level as u8, bucket, i, key, value);
+                        .create_or_update_entry(level as _LevelIdxT, bucket, i, key, value);
                     self.item_counts[level as usize] += 1;
                     return true;
                 }
@@ -355,9 +376,12 @@ impl LevelHash {
         return false;
     }
 
-    fn b2t_movement(&mut self, bucket: u32, bucket_size: u8) -> Option<u8> {
-        for i in 0u8..bucket_size {
-            let bottom_entry = self.io.val_entry_for_slot(L1 as u8, bucket, i).unwrap();
+    fn b2t_movement(&mut self, bucket: _BucketIdxT, bucket_size: _SlotIdxT) -> Option<_SlotIdxT> {
+        for i in 0..bucket_size {
+            let bottom_entry = self
+                .io
+                .val_entry_for_slot(L1 as _LevelIdxT, bucket, i)
+                .unwrap();
             let bottom_entry_key = bottom_entry.key(&mut self.io.values).unwrap();
             let bottom_entry_value = bottom_entry
                 .key(&mut self.io.values)
@@ -369,14 +393,14 @@ impl LevelHash {
 
             for j in 0..bucket_size {
                 if self.insert_entry_at_slot(
-                    L0 as u8,
+                    L0 as _LevelIdxT,
                     fidx,
                     j,
                     &bottom_entry_key,
                     &bottom_entry_value,
                     false,
                 ) || self.insert_entry_at_slot(
-                    L0 as u8,
+                    L0 as _LevelIdxT,
                     sidx,
                     j,
                     &bottom_entry_key,
@@ -397,23 +421,26 @@ impl LevelHash {
         return None;
     }
 
-    fn do_expand(&mut self, level_size: u8) -> bool {
+    fn do_expand(&mut self, level_size: LevelSizeT) -> bool {
         let new_top_level_capacity: u64 = 1u64 << level_size;
         let mut new_level_item_count = 0u32;
 
         self.io.prepare_interim(new_top_level_capacity as u32);
 
-        let bucket_size = self.io.meta.km_bucket_size();
+        let bucket_size = self.io.meta.km_bucket_size() as _SlotIdxT;
 
         for old_buck_idx in 0..(self.top_level_bucket_count() >> 1) {
             for old_slot_idx in 0..bucket_size {
-                if !self.io.is_occupied(L1 as u8, old_buck_idx, old_slot_idx) {
+                if !self
+                    .io
+                    .is_occupied(L1 as _LevelIdxT, old_buck_idx, old_slot_idx)
+                {
                     continue;
                 }
 
                 let entry = self
                     .io
-                    .val_entry_for_slot(L1 as u8, old_buck_idx, old_slot_idx)
+                    .val_entry_for_slot(L1 as _LevelIdxT, old_buck_idx, old_slot_idx)
                     .unwrap();
                 let key = entry.key(&mut self.io.values).unwrap();
                 let fhash = self.fhash(&key);
@@ -425,13 +452,13 @@ impl LevelHash {
                 let mut insert_success = false;
                 for new_slot_idx in 0..bucket_size {
                     if self.io.move_to_interim(
-                        L1 as u8,
+                        L1 as _LevelIdxT,
                         old_buck_idx,
                         old_slot_idx,
                         fidx,
                         new_slot_idx,
                     ) || self.io.move_to_interim(
-                        L1 as u8,
+                        L1 as _LevelIdxT,
                         old_buck_idx,
                         old_slot_idx,
                         sidx,
@@ -459,7 +486,10 @@ impl LevelHash {
 }
 
 impl LevelHash {
-    fn find_slot(&mut self, key: &[u8]) -> Option<(ValuesEntry, u8, u32, u8)> {
+    fn find_slot(
+        &mut self,
+        key: &[u8],
+    ) -> Option<(ValuesEntry, _LevelIdxT, _BucketIdxT, _SlotIdxT)> {
         let fhash = self.fhash(key);
         let shash = self.shash(key);
 
@@ -471,7 +501,7 @@ impl LevelHash {
             LEVELS
         };
 
-        let bucket_size = self.io.meta.km_bucket_size();
+        let bucket_size = self.io.meta.km_bucket_size() as _SlotIdxT;
 
         for level in levels {
             let fidx = self.buck_idx_lvl(fhash, level);
@@ -486,7 +516,7 @@ impl LevelHash {
                             .map(|e| (e, sidx))
                     })
                 {
-                    return Some((e, level as u8, buck, j));
+                    return Some((e, level as _LevelIdxT, buck, j));
                 }
             }
         }
@@ -500,8 +530,13 @@ impl LevelHash {
             .and_then(|e| e.0.value(&mut self.io.values));
     }
 
-    pub fn get_value_at(&mut self, level: Level, bucket: u32, slot: u8) -> Option<Vec<u8>> {
-        return self.io.value(level as u8, bucket, slot);
+    pub fn get_value_at(
+        &mut self,
+        level: Level,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> Option<Vec<u8>> {
+        return self.io.value(level as _LevelIdxT, bucket, slot);
     }
 
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> bool {
@@ -515,7 +550,7 @@ impl LevelHash {
 
         let fhash = self.fhash(key);
         let shash = self.shash(key);
-        let bucket_size = self.io.meta.km_bucket_size();
+        let bucket_size = self.io.meta.km_bucket_size() as _SlotIdxT;
 
         // Check if there are any empty slots availale in any of the levels
         // If there are, insert the key-value pair and return true
@@ -523,9 +558,21 @@ impl LevelHash {
             let fidx = self.buck_idx_lvl(fhash, level);
             let sidx = self.buck_idx_lvl(shash, level);
             for j in 0..bucket_size {
-                if self.insert_entry_at_slot(level as u8, fidx, j, key, value, self.unique_keys)
-                    || self.insert_entry_at_slot(level as u8, sidx, j, key, value, self.unique_keys)
-                {
+                if self.insert_entry_at_slot(
+                    level as _LevelIdxT,
+                    fidx,
+                    j,
+                    key,
+                    value,
+                    self.unique_keys,
+                ) || self.insert_entry_at_slot(
+                    level as _LevelIdxT,
+                    sidx,
+                    j,
+                    key,
+                    value,
+                    self.unique_keys,
+                ) {
                     self.item_counts[level as usize] += 1;
                     return true;
                 }
@@ -556,7 +603,7 @@ impl LevelHash {
 
             if let Some((bucket, slot)) = from_pos {
                 self.io
-                    .create_or_update_entry(L0 as u8, bucket, slot, key, value);
+                    .create_or_update_entry(L0 as _LevelIdxT, bucket, slot, key, value);
                 self.item_counts[L0 as usize] += 1;
                 return true;
             }

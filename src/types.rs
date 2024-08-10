@@ -17,3 +17,10 @@
 
 /// Type used to represent offsets in file.
 pub type OffT = u64;
+
+pub type LevelSizeT = u8;
+pub type BucketSizeT = u8;
+
+pub(crate) type _LevelIdxT = u32;
+pub(crate) type _BucketIdxT = u32;
+pub(crate) type _SlotIdxT = u32;

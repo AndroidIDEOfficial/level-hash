@@ -28,7 +28,7 @@ use crate::level_io::VALUES_SEGMENT_SIZE_DEFAULT;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::size::SIZE_U8;
-use crate::types::OffT;
+use crate::types::{BucketSizeT, LevelSizeT, OffT};
 use crate::util::file_open_or_panic;
 
 pub struct MetaIO {
@@ -36,7 +36,7 @@ pub struct MetaIO {
 }
 
 impl MetaIO {
-    pub fn new(path: &Path, level_size: u8, bucket_size: u8) -> MetaIO {
+    pub fn new(path: &Path, level_size: LevelSizeT, bucket_size: BucketSizeT) -> MetaIO {
         init_sparse_file(path, None);
 
         let file = file_open_or_panic(path, true, true, false);
@@ -156,19 +156,19 @@ impl MetaIO {
         self.write_u64(Self::VAL__VAL_SIZE__OFFSET, value);
     }
 
-    pub fn km_level_size(&mut self) -> u8 {
+    pub fn km_level_size(&mut self) -> LevelSizeT {
         return self.read(Self::KM__LEVEL_SIZE__OFFSET);
     }
 
-    pub fn set_km_level_size(&mut self, value: u8) {
+    pub fn set_km_level_size(&mut self, value: LevelSizeT) {
         self.write(Self::KM__LEVEL_SIZE__OFFSET, value);
     }
 
-    pub fn km_bucket_size(&mut self) -> u8 {
+    pub fn km_bucket_size(&mut self) -> BucketSizeT {
         return self.read(Self::KM__BUCKET_SIZE__OFFSET);
     }
 
-    pub fn set_km_bucket_size(&mut self, value: u8) {
+    pub fn set_km_bucket_size(&mut self, value: BucketSizeT) {
         self.write(Self::KM__BUCKET_SIZE__OFFSET, value);
     }
 

@@ -29,7 +29,10 @@ use crate::log::loge;
 use crate::meta::MetaIO;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
-use crate::types::OffT;
+use crate::types::_BucketIdxT;
+use crate::types::_LevelIdxT;
+use crate::types::_SlotIdxT;
+use crate::types::{BucketSizeT, LevelSizeT, OffT};
 
 pub const LEVEL_VALUES_VERSION: u32 = 1;
 pub const LEVEL_KEYMAP_VERSION: u32 = 1;
@@ -132,11 +135,6 @@ impl ValuesEntry {
         return self.seek_over_key(file, true).1;
     }
 
-    /// Get the key bytes of this entry, and the size of the key.
-    pub fn key_with_size(&self, file: &mut MappedFile) -> (u32, Option<Vec<u8>>) {
-        return self.seek_over_key(file, true);
-    }
-
     /// Get the value size of this entry.
     pub fn value_size(&self, file: &mut MappedFile) -> u32 {
         self.seek_over_key(file, false);
@@ -184,7 +182,12 @@ impl LevelHashIO {
     /// of the level hash.
     /// * `bucket_size`: The bucket size of the level hash. This is the number of slots that make up
     /// a single bucket.
-    pub fn new(index_dir: &Path, index_name: &str, level_size: u8, bucket_size: u8) -> Self {
+    pub fn new(
+        index_dir: &Path,
+        index_name: &str,
+        level_size: LevelSizeT,
+        bucket_size: BucketSizeT,
+    ) -> Self {
         create_dir_all(index_dir).expect("Failed to create directories");
         let file_name = format!("{}{}", index_name, Self::LEVEL_INDEX_EXT);
         let index_file = index_dir.join(&file_name);
@@ -286,7 +289,12 @@ impl LevelHashIO {
     }
 
     /// Get the address of the slot entry in the keymap file for the given level, bucket and slot.
-    pub(crate) fn slot_addr(&mut self, level: u8, bucket: u32, slot: u8) -> OffT {
+    pub(crate) fn slot_addr(
+        &mut self,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> OffT {
         let lvl_addr = match level {
             0 => self.meta.km_l0_addr(),
             1 => self.meta.km_l1_addr(),
@@ -297,23 +305,28 @@ impl LevelHashIO {
     }
 
     /// Get the address of the slot entry in the keymap file for the given level offset, bucket and slot.
-    fn slot_addr_for_lvl_addr(&mut self, lvl_addr: OffT, bucket: u32, slot: u8) -> OffT {
+    fn slot_addr_for_lvl_addr(
+        &mut self,
+        lvl_addr: OffT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> OffT {
         lvl_addr + // start position of level
             (Self::KEYMAP_ENTRY_SIZE_BYTES * self.meta.km_bucket_size() as OffT * bucket as OffT) + // bucket position
             (Self::KEYMAP_ENTRY_SIZE_BYTES * slot as OffT)
     }
 
     /// Seek to the slot entry offset in the keymap file for the given level, bucket and slot.
-    fn move_to_slot(&mut self, level: u8, bucket: u32, slot: u8) -> bool {
+    fn move_to_slot(&mut self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> bool {
         let slot = self.slot_addr(level, bucket, slot);
         self.keymap.seek(Start(slot)).is_ok()
     }
 
     pub(crate) fn slot_and_val_addr_at(
         &mut self,
-        level: u8,
-        bucket: u32,
-        slot: u8,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
     ) -> (OffT, Option<OffT>) {
         let slot = self.slot_addr(level, bucket, slot);
         let val = self
@@ -327,14 +340,24 @@ impl LevelHashIO {
     }
 
     /// Get the address of the value entry in the values file for the given level, bucket and slot.
-    fn val_addr_at(&mut self, level: u8, bucket: u32, slot: u8) -> Option<OffT> {
+    fn val_addr_at(
+        &mut self,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> Option<OffT> {
         self.move_to_slot(level, bucket, slot)
             .then(|| self.keymap.r_u64())
             .take_if(|addr| *addr > Self::POS_INVALID)
     }
 
     /// Get the [ValuesEntry] for the given level, bucket and slot.
-    pub fn val_entry_for_slot(&mut self, level: u8, bucket: u32, slot: u8) -> Option<ValuesEntry> {
+    pub fn val_entry_for_slot(
+        &mut self,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> Option<ValuesEntry> {
         self.val_addr_at(level, bucket, slot)
             .map(|addr| ValuesEntry::at(addr - 1))
     }
@@ -343,21 +366,24 @@ impl LevelHashIO {
 impl LevelHashIO {
     /// Check if the slot is occupied.
     //noinspection RsSelfConvention
-    pub(crate) fn is_occupied(&mut self, level: u8, bucket: u32, slot: u8) -> bool {
+    pub(crate) fn is_occupied(
+        &mut self,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> bool {
         self.val_entry_for_slot(level, bucket, slot)
             .take_if(|entry| entry.entry_size(&mut self.values) > 0)
             .is_some()
     }
 
-    /// Get the key for the given level, bucket and slot.
-    pub fn key(&mut self, level: u8, bucket: u32, slot: u8) -> Option<Vec<u8>> {
-        self.val_entry_for_slot(level, bucket, slot)
-            .take_if(|entry| entry.entry_size(&mut self.values) > 0)
-            .and_then(|entry| entry.key(&mut self.values))
-    }
-
     /// Get the value for the given level, bucket and slot.
-    pub fn value(&mut self, level: u8, bucket: u32, slot: u8) -> Option<Vec<u8>> {
+    pub fn value(
+        &mut self,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+    ) -> Option<Vec<u8>> {
         self.val_entry_for_slot(level, bucket, slot)
             .take_if(|entry| entry.entry_size(&mut self.values) > 0)
             .and_then(|entry| entry.value(&mut self.values))
@@ -371,9 +397,9 @@ impl LevelHashIO {
     /// willl be updated to point to the new entry.
     pub fn update_entry_value(
         &mut self,
-        level: u8,
-        bucket: u32,
-        slot: u8,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
         new_value: &[u8],
     ) -> Option<Vec<u8>> {
         let slot_addr = self.slot_addr(level, bucket, slot);
@@ -434,9 +460,9 @@ impl LevelHashIO {
     /// point to the new entry.
     pub fn create_or_update_entry(
         &mut self,
-        level: u8,
-        bucket: u32,
-        slot: u8,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
         key: &[u8],
         value: &[u8],
     ) {
@@ -705,11 +731,11 @@ impl LevelHashIO {
     /// Move the given slot to the interim level, returning `true` if the move was successful.
     pub(crate) fn move_to_interim(
         &mut self,
-        level: u8,
-        bucket: u32,
-        slot: u8,
-        interim_bucket: u32,
-        interim_slot: u8,
+        level: _LevelIdxT,
+        bucket: _BucketIdxT,
+        slot: _SlotIdxT,
+        interim_bucket: _BucketIdxT,
+        interim_slot: _SlotIdxT,
     ) -> bool {
         assert!(self.interim_lvl_addr.is_some());
 
