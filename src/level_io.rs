@@ -744,11 +744,6 @@ impl LevelHashIO {
         // 3. deallocate the space occupied by the source slot
         self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
 
-        println!(
-            "Moved [{},{},{}]->[0,{},{}] --- {}->{} --- {}",
-            level, bucket, slot, interim_bucket, interim_slot, s_slot_addr, d_slot_addr, e_val_addr
-        );
-
         return true;
     }
 
