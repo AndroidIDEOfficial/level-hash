@@ -245,6 +245,7 @@ impl LevelHash {
 }
 
 impl LevelHash {
+    #[inline]
     fn fhash(&self, key: &[u8]) -> u64 {
         return Self::__hash(self.seed_1, key);
     }
@@ -269,6 +270,7 @@ impl LevelHash {
         return Self::buck_idx_cap(key_hash, capacity);
     }
 
+    #[inline]
     fn buck_idx_cap(key_hash: u64, capacity: u64) -> u32 {
         // since capacity is a power of two and key hash is unsigned
         // keyHash % capacity can be simplified with simple bit shift operation

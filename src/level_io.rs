@@ -767,8 +767,10 @@ impl LevelHashIO {
         self.keymap.seek(Start(d_slot_addr)).unwrap();
         self.keymap.w_u64(e_val_addr);
 
-        // 3. deallocate the space occupied by the source slot
-        self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
+        // 3. (we can) deallocate the space occupied by the source slot
+        // but instead of deallocating each slot one-by-one,
+        // we deallocate the whole level region at once in commit_interim with one system call
+        // self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
 
         return true;
     }
@@ -778,14 +780,31 @@ impl LevelHashIO {
     pub(crate) fn commit_interim(&mut self, new_level_size: u8) {
         assert!(self.interim_lvl_addr.is_some());
 
+        let l0_addr = self.meta.km_l0_addr();
+        let l1_addr = self.meta.km_l1_addr();
+        
+        // top_bucket_count = 2^level_size = 1u64 << level_size
+        // top_slot_count = top_bucket_count * bucket_size
+        // top_level_size = top_slot_count * 16             ... (entry_size=16)
+        // top_level_size = top_slot_count << 4             ... (simplified 'top_slot_count * 16')
+        // bottom_level_size = top_level_size / 2
+        //                   = top_level_size >> 1
+        //                   = (top_slot_count << 4) >> 1
+        //                   = top_slot_count << 3 
+        
+        let l1_size = ((1u64 << self.meta.km_level_size())
+            * self.meta.km_bucket_size() as u64) << 3;
+
         // update the level size
         self.meta.set_km_level_size(new_level_size);
 
         // current top level becomes the new bottom level
         // and interim level becomes the new top level
-        let l0_addr = self.meta.km_l0_addr();
         self.meta.set_km_l1_addr(l0_addr);
         self.meta.set_km_l0_addr(self.interim_lvl_addr.unwrap());
         self.interim_lvl_addr = None;
+
+        // deallocate the unused level
+        self.km_deallocate(l1_addr, l1_size);
     }
 }

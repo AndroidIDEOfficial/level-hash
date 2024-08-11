@@ -71,6 +71,8 @@ impl MappedFile {
 }
 
 impl MappedFile {
+
+    #[inline]
     pub(crate) fn deallocate(&mut self, offset: OffT, len: OffT) {
         fallocate_safe_punch_file(&self.file, offset, len)
     }
