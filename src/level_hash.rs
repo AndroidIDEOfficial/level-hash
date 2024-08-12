@@ -272,7 +272,6 @@ impl LevelHash {
         return Self::buck_idx_cap(key_hash, capacity);
     }
 
-    #[inline]
     fn buck_idx_cap(key_hash: u64, capacity: u64) -> u32 {
         // since capacity is a power of two and key hash is unsigned
         // keyHash % capacity can be simplified with simple bit shift operation
