@@ -28,7 +28,9 @@ use crate::level_io::VALUES_SEGMENT_SIZE_DEFAULT;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::size::SIZE_U8;
-use crate::types::{BucketSizeT, LevelSizeT, OffT};
+use crate::types::BucketSizeT;
+use crate::types::LevelSizeT;
+use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
 pub struct MetaIO {
@@ -81,9 +83,7 @@ impl MetaIO {
 impl MetaIO {
     #[inline]
     fn seek(&mut self, offset: OffT) {
-        self.file
-            .seek(SeekFrom::Start(offset as u64))
-            .expect(&format!("Failed to seek to offset {}", offset));
+        self.file.seek(SeekFrom::Start(offset as u64)).unwrap();
     }
 
     fn write(&mut self, offset: OffT, value: u8) {

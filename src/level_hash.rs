@@ -26,6 +26,8 @@ use crate::level_hash::ResizeState::NotResizing;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValuesEntry;
 use crate::log::loge;
+use crate::types::LevelKeyT;
+use crate::types::LevelValueT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
@@ -246,12 +248,12 @@ impl LevelHash {
 
 impl LevelHash {
     #[inline]
-    fn fhash(&self, key: &[u8]) -> u64 {
+    fn fhash(&self, key: &LevelKeyT) -> u64 {
         return Self::__hash(self.seed_1, key);
     }
 
     #[inline]
-    fn shash(&self, key: &[u8]) -> u64 {
+    fn shash(&self, key: &LevelKeyT) -> u64 {
         return Self::__hash(self.seed_2, key);
     }
 
@@ -293,7 +295,7 @@ impl LevelHash {
         level: Level,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
-        key: &[u8],
+        key: &LevelKeyT,
     ) -> Option<ValuesEntry> {
         return self.entry_at(level, bucket, slot).take_if(|e| {
             (e.entry_size(&mut self.io.values) > 0)
@@ -307,8 +309,8 @@ impl LevelHash {
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
-        key: &[u8],
-        value: &[u8],
+        key: &LevelKeyT,
+        value: &LevelValueT,
         fail_on_dup: bool,
     ) -> bool {
         let (slot_addr, val_addr) = self.io.slot_and_val_addr_at(level, bucket, slot);
@@ -327,10 +329,7 @@ impl LevelHash {
         }
 
         // check for duplicate key
-        assert!(
-            !fail_on_dup || !entry.key(&mut self.io.values).is_some_and(|k| k == key),
-            "key already exists"
-        );
+        assert!(!fail_on_dup || !entry.key(&mut self.io.values).is_some_and(|k| k == key));
 
         return false;
     }
@@ -340,8 +339,8 @@ impl LevelHash {
         level: Level,
         bucket: _BucketIdxT,
         bucket_size: _SlotIdxT,
-        key: &[u8],
-        value: &[u8],
+        key: &LevelKeyT,
+        value: &LevelValueT,
     ) -> bool {
         for i in 0..bucket_size {
             let this_entry = self
@@ -490,7 +489,7 @@ impl LevelHash {
 impl LevelHash {
     fn find_slot(
         &mut self,
-        key: &[u8],
+        key: &LevelKeyT,
     ) -> Option<(ValuesEntry, _LevelIdxT, _BucketIdxT, _SlotIdxT)> {
         let fhash = self.fhash(key);
         let shash = self.shash(key);
@@ -526,7 +525,7 @@ impl LevelHash {
         None
     }
 
-    pub fn get_value(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+    pub fn get_value(&mut self, key: &LevelKeyT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| e.0.value(&mut self.io.values));
@@ -541,7 +540,7 @@ impl LevelHash {
         return self.io.value(level as _LevelIdxT, bucket, slot);
     }
 
-    pub fn insert(&mut self, key: &[u8], value: &[u8]) -> bool {
+    pub fn insert(&mut self, key: &LevelKeyT, value: &LevelValueT) -> bool {
         if self.load_factor() >= self.load_factor_threshold && self.auto_expand {
             assert!(self.expand(), "auto expand failed");
         }
@@ -614,13 +613,13 @@ impl LevelHash {
         false
     }
 
-    pub fn remove(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+    pub fn remove(&mut self, key: &LevelKeyT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| self.io.delete_at(e.0.addr + 1, Some(key), true));
     }
 
-    pub fn update(&mut self, key: &[u8], new_value: &[u8]) -> Option<Vec<u8>> {
+    pub fn update(&mut self, key: &LevelKeyT, new_value: &LevelValueT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| self.io.update_entry_value(e.1, e.2, e.3, new_value));

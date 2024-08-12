@@ -18,6 +18,9 @@
 /// Type used to represent offsets in file.
 pub type OffT = u64;
 
+pub type LevelKeyT = [u8];
+pub type LevelValueT = [u8];
+
 pub type LevelSizeT = u8;
 pub type BucketSizeT = u8;
 

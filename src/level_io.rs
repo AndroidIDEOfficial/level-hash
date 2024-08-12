@@ -29,6 +29,8 @@ use crate::log::loge;
 use crate::meta::MetaIO;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
+use crate::types::LevelKeyT;
+use crate::types::LevelValueT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
@@ -400,7 +402,7 @@ impl LevelHashIO {
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
-        new_value: &[u8],
+        new_value: &LevelValueT,
     ) -> Option<Vec<u8>> {
         let slot_addr = self.slot_addr(level, bucket, slot);
         self.keymap.seek(Start(slot_addr)).unwrap();
@@ -463,8 +465,8 @@ impl LevelHashIO {
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
-        key: &[u8],
-        value: &[u8],
+        key: &LevelKeyT,
+        value: &LevelValueT,
     ) {
         let slot_addr = self.slot_addr(level, bucket, slot);
 
@@ -487,7 +489,12 @@ impl LevelHashIO {
 
     /// Append a new entry to the values file at the given slot position. The slot entry at the given
     /// slot address in the keymap file will be updated to point to the new entry.
-    pub fn append_entry_at_slot(&mut self, slot_addr: OffT, key: &[u8], value: &[u8]) -> bool {
+    pub fn append_entry_at_slot(
+        &mut self,
+        slot_addr: OffT,
+        key: &LevelKeyT,
+        value: &LevelValueT,
+    ) -> bool {
         let tail_addr = self.meta.val_tail_addr();
 
         // this may be the first entry in the values file
@@ -582,7 +589,12 @@ impl LevelHashIO {
     /// Delete the entry at the given slot position, optionally reading the existing value if `read_value`
     /// is true. The slot entry at the given slot address in the keymap file will be updated to a
     /// null pointer (0). The entry will be deleted only if the keys match.
-    fn delete_at_slot(&mut self, slot_addr: OffT, key: &[u8], read_value: bool) -> Option<Vec<u8>> {
+    fn delete_at_slot(
+        &mut self,
+        slot_addr: OffT,
+        key: &LevelKeyT,
+        read_value: bool,
+    ) -> Option<Vec<u8>> {
         self.keymap.seek(Start(slot_addr)).unwrap();
         let val_addr = self.keymap.r_u64();
         self.km_deallocate(slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
@@ -782,7 +794,7 @@ impl LevelHashIO {
 
         let l0_addr = self.meta.km_l0_addr();
         let l1_addr = self.meta.km_l1_addr();
-        
+
         // top_bucket_count = 2^level_size = 1u64 << level_size
         // top_slot_count = top_bucket_count * bucket_size
         // top_level_size = top_slot_count * 16             ... (entry_size=16)
@@ -790,10 +802,10 @@ impl LevelHashIO {
         // bottom_level_size = top_level_size / 2
         //                   = top_level_size >> 1
         //                   = (top_slot_count << 4) >> 1
-        //                   = top_slot_count << 3 
-        
-        let l1_size = ((1u64 << self.meta.km_level_size())
-            * self.meta.km_bucket_size() as u64) << 3;
+        //                   = top_slot_count << 3
+
+        let l1_size =
+            ((1u64 << self.meta.km_level_size()) * self.meta.km_bucket_size() as u64) << 3;
 
         // update the level size
         self.meta.set_km_level_size(new_level_size);
