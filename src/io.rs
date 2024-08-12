@@ -117,6 +117,16 @@ impl MappedFile {
     pub(crate) fn w_u64(&mut self, v: u64) {
         self.write_u64::<byteorder::BigEndian>(v).unwrap()
     }
+
+    pub(crate) fn memcmp(&self, offset: OffT, other: &[u8]) -> i32 {
+        unsafe {
+            libc::memcmp(
+                self.map.as_ptr().add(offset as usize) as *const libc::c_void,
+                other.as_ptr() as *const libc::c_void,
+                other.len(),
+            )
+        }
+    }
 }
 
 impl Seek for MappedFile {

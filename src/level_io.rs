@@ -68,6 +68,9 @@ impl ValuesEntry {
     const OFF_PREV_ENTRY: OffT = Self::OFF_ENTRY_SIZE + SIZE_U32;
     const OFF_NEXT_ENTRY: OffT = Self::OFF_PREV_ENTRY + SIZE_U64;
     const OFF_KEY_SIZE: OffT = Self::OFF_NEXT_ENTRY + SIZE_U64;
+    const OFF_KEY: OffT = Self::OFF_KEY_SIZE + SIZE_U32;
+
+    const BYTES_U32_0: [u8; 4] = [0u8; 4];
 
     /// Create [ValuesEntry] representing the entry at `addr` in the values file.
     pub fn at(addr: OffT) -> Self {
@@ -85,10 +88,18 @@ impl ValuesEntry {
         file.seek(Start(self.addr + off)).unwrap();
     }
 
-    /// Get the `entry_size` field of this entry.
-    pub fn entry_size(&self, file: &mut MappedFile) -> u32 {
-        self.goto(file, Self::OFF_ENTRY_SIZE);
-        file.r_u32()
+    /// Compare the `entry_size` field of this entry with the given size.
+    pub fn esizecmp(&self, file: &mut MappedFile, size: u32) -> i32 {
+        let mut bytes = Self::BYTES_U32_0;
+        if size > 0 {
+            bytes = size.to_be_bytes();
+        }
+        file.memcmp(self.addr + Self::OFF_ENTRY_SIZE, &bytes)
+    }
+
+    /// Check whether this values entry has `entry_size` 0.
+    pub fn is_empty(&self, file: &mut MappedFile) -> bool {
+        return self.esizecmp(file, 0) == 0;
     }
 
     /// Get the `prev_entry` field of this entry.
@@ -101,12 +112,6 @@ impl ValuesEntry {
     pub fn next_entry(&self, file: &mut MappedFile) -> OffT {
         self.goto(file, Self::OFF_NEXT_ENTRY);
         file.r_u64()
-    }
-
-    /// Get the `key_size` field of this entry.
-    pub fn key_size(&self, file: &mut MappedFile) -> u32 {
-        self.goto(file, Self::OFF_KEY_SIZE);
-        file.r_u32()
     }
 
     /// Seek over the key region of this entry, optionally reading the key bytes.
@@ -132,9 +137,30 @@ impl ValuesEntry {
         return (size, result);
     }
 
+    /// Get the `key_size` field of this entry.
+    pub fn key_size(&self, file: &mut MappedFile) -> u32 {
+        self.goto(file, Self::OFF_KEY_SIZE);
+        file.r_u32()
+    }
+
+    /// Compare the `key_size` field of this entry with the given value.
+    pub fn ksizecmp(&self, file: &mut MappedFile, size: u32) -> i32 {
+        let mut bytes = Self::BYTES_U32_0;
+        if size > 0 {
+            bytes = size.to_be_bytes();
+        }
+        return file.memcmp(self.addr + Self::OFF_KEY_SIZE, &bytes);
+    }
+
     /// Get the key bytes of this entry.
     pub fn key(&self, file: &mut MappedFile) -> Option<Vec<u8>> {
         return self.seek_over_key(file, true).1;
+    }
+
+    /// Compare the key region in the memory mapped file with the given key.
+    pub fn keyeq(&self, file: &mut MappedFile, other: &LevelKeyT) -> bool {
+        return self.ksizecmp(file, other.len() as u32) == 0
+            && file.memcmp(self.addr + Self::OFF_KEY, other) == 0;
     }
 
     /// Get the value size of this entry.
@@ -375,7 +401,7 @@ impl LevelHashIO {
         slot: _SlotIdxT,
     ) -> bool {
         self.val_entry_for_slot(level, bucket, slot)
-            .take_if(|entry| entry.entry_size(&mut self.values) > 0)
+            .take_if(|entry| !entry.is_empty(&mut self.values))
             .is_some()
     }
 
@@ -387,7 +413,7 @@ impl LevelHashIO {
         slot: _SlotIdxT,
     ) -> Option<Vec<u8>> {
         self.val_entry_for_slot(level, bucket, slot)
-            .take_if(|entry| entry.entry_size(&mut self.values) > 0)
+            .take_if(|entry| !entry.is_empty(&mut self.values))
             .and_then(|entry| entry.value(&mut self.values))
     }
 }
@@ -417,7 +443,7 @@ impl LevelHashIO {
         }
 
         let entry = ValuesEntry::at(val_addr - 1);
-        if entry.entry_size(&mut self.values) <= 0 {
+        if entry.is_empty(&mut self.values) {
             // the entry is not occupied
             loge(&format!(
                 "Cannot update an empty entry: level={}, bucket={}, slot={}",
@@ -625,7 +651,7 @@ impl LevelHashIO {
         if let Some(k) = key {
             // if we have been provided with a key, then check if the key matches
             // if not, then do not delete
-            if entry.key(&mut self.values).is_some_and(|k2| k2 != k) {
+            if !entry.keyeq(&mut self.values, k) {
                 return read_value.then(|| entry.value(&mut self.values)).flatten();
             }
         }

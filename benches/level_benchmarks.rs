@@ -52,13 +52,13 @@ fn create_level_hash(
 fn bench_level_insert(c: &mut Criterion) {
     c.bench_function("insert", |b| {
         let mut hash = create_level_hash("insert", true, |ops| {
-            ops.level_size(11)
-                .bucket_size(4)
+            ops.level_size(13)
+                .bucket_size(10)
                 .auto_expand(false)
                 .unique_keys(false);
         });
         b.iter(|| {
-            for i in 0..10000 {
+            for i in 0..100000 {
                 let key = black_box([i as u8]);
                 let value = black_box([i as u8]);
                 hash.insert(&key, &value);
@@ -70,18 +70,18 @@ fn bench_level_insert(c: &mut Criterion) {
 fn bench_level_lookup(c: &mut Criterion) {
     c.bench_function("lookup", |b| {
         let mut hash = create_level_hash("lookup", true, |ops| {
-            ops.level_size(11)
-                .bucket_size(4)
+            ops.level_size(13)
+                .bucket_size(10)
                 .auto_expand(false)
                 .unique_keys(false);
         });
-        for i in 0..10000 {
+        for i in 0..100000 {
             let key = [i as u8];
             let value = [i as u8];
             hash.insert(&key, &value);
         }
         b.iter(|| {
-            for i in 0..10000 {
+            for i in 0..100000 {
                 let key = black_box([i as u8]);
                 hash.get_value(&key);
             }
@@ -92,18 +92,18 @@ fn bench_level_lookup(c: &mut Criterion) {
 fn bench_level_delete(c: &mut Criterion) {
     c.bench_function("delete", |b| {
         let mut hash = create_level_hash("delete", true, |ops| {
-            ops.level_size(11)
-                .bucket_size(4)
+            ops.level_size(13)
+                .bucket_size(10)
                 .auto_expand(false)
                 .unique_keys(false);
         });
-        for i in 0..10000 {
+        for i in 0..100000 {
             let key = [i as u8];
             let value = [i as u8];
             hash.insert(&key, &value);
         }
         b.iter(|| {
-            for i in 0..10000 {
+            for i in 0..100000 {
                 let key = black_box([i as u8]);
                 hash.remove(&key);
             }
@@ -118,12 +118,12 @@ fn bench_level_insert_auto_expand(c: &mut Criterion) {
             // we're inserting 10,000 entries
             // so this should expand
             ops.level_size(10)
-                .bucket_size(4)
+                .bucket_size(10)
                 .auto_expand(true)
                 .unique_keys(false);
         });
         b.iter(|| {
-            for i in 0..10000 {
+            for i in 0..100000 {
                 let key = black_box([i as u8]);
                 let value = black_box([i as u8]);
                 hash.insert(&key, &value);
@@ -141,7 +141,7 @@ fn bench_level_mixed(c: &mut Criterion) {
                 .unique_keys(false);
         });
         b.iter(|| {
-            for i in 0..10000 {
+            for i in 0..100000 {
                 let key = black_box([i as u8]);
                 let value = black_box([i as u8]);
                 hash.insert(&key, &value);

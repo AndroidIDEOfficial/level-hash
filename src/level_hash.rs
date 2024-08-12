@@ -297,8 +297,8 @@ impl LevelHash {
         key: &LevelKeyT,
     ) -> Option<ValuesEntry> {
         return self.entry_at(level, bucket, slot).take_if(|e| {
-            (e.entry_size(&mut self.io.values) > 0)
-                .then(|| e.key(&mut self.io.values).is_some_and(|k| k == key))
+            (!e.is_empty(&mut self.io.values))
+                .then(|| e.keyeq(&mut self.io.values, key))
                 .unwrap_or(false)
         });
     }
@@ -322,13 +322,13 @@ impl LevelHash {
         let val_addr = val_addr.unwrap();
         let entry = ValuesEntry::at(val_addr - 1);
 
-        if entry.entry_size(&mut self.io.values) <= 0 {
+        if entry.is_empty(&mut self.io.values) {
             // slot is occupied, but the entry is empty
             return self.io.append_entry_at_slot(slot_addr, key, value);
         }
 
         // check for duplicate key
-        assert!(!fail_on_dup || !entry.key(&mut self.io.values).is_some_and(|k| k == key));
+        assert!(!fail_on_dup || !entry.keyeq(&mut self.io.values, key));
 
         return false;
     }
