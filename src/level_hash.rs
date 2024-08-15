@@ -22,18 +22,20 @@ use highway::HighwayHash;
 use highway::HighwayHasher;
 use highway::Key;
 
-use crate::result::LevelInitResult;
+use crate::generate_seeds;
 use crate::level_hash::ResizeState::NotResizing;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValuesEntry;
 use crate::log::loge;
+use crate::result::LevelInitError;
+use crate::result::LevelInitResult;
+use crate::types::BucketSizeT;
 use crate::types::LevelKeyT;
+use crate::types::LevelSizeT;
 use crate::types::LevelValueT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
-use crate::types::LevelSizeT;
-use crate::types::BucketSizeT;
 use crate::Level::L0;
 use crate::Level::L1;
 use crate::ResizeState::Expanding;
@@ -103,6 +105,7 @@ pub struct LevelHashOptions {
 }
 
 impl LevelHashOptions {
+    /// Create new [LevelHashOptions].
     pub fn new() -> Self {
         LevelHashOptions {
             level_size: LEVEL_SIZE_DEFAULT,
@@ -116,6 +119,11 @@ impl LevelHashOptions {
         }
     }
 
+    /// Set the level size of the level hash.
+    ///
+    /// ## Parameters
+    ///
+    /// * size: The level size.
     pub fn level_size(&mut self, size: LevelSizeT) -> &mut Self {
         assert!(
             size <= LEVEL_SIZE_MAX,
@@ -126,6 +134,11 @@ impl LevelHashOptions {
         self
     }
 
+    /// Set the bucket size of the level hash.
+    ///
+    /// ## Parameters
+    ///
+    /// * size: The bucket size.
     pub fn bucket_size(&mut self, size: BucketSizeT) -> &mut Self {
         assert!(
             size <= BUCKET_SIZE_MAX,
@@ -136,31 +149,49 @@ impl LevelHashOptions {
         self
     }
 
+    /// Set whether the level hash must have unique keys.
     pub fn unique_keys(&mut self, unique_keys: bool) -> &mut Self {
         self.unique_keys = unique_keys;
         self
     }
 
+    /// Set whether the level hash should expand automatically when [Self::load_factor_threshold]
+    /// is reached.
     pub fn auto_expand(&mut self, auto_expand: bool) -> &mut Self {
         self.auto_expand = auto_expand;
         self
     }
 
+    /// Set the load factor threshold for automatically expanding the level hash.
     pub fn load_factor_threshold(&mut self, threshold: f32) -> &mut Self {
+        assert!(
+            threshold >= 0.5 && threshold <= 1.0,
+            "threshold value must be between 0.5 and 1.0"
+        );
         self.load_factor_threshold = threshold;
         self
     }
 
+    /// Set the path of the directory where the index files will be stored. The directory,
+    /// including the parent directories will be created if they do not exist.
     pub fn index_dir(&mut self, index_dir: &Path) -> &mut Self {
         self.index_dir = Some(index_dir.to_path_buf());
         self
     }
 
+    /// Set the name of the index.
     pub fn index_name(&mut self, index_name: &str) -> &mut Self {
         self.index_name = Some(index_name.to_string());
         self
     }
 
+    /// Set the two random seeds that will be used to calculate the slot positions in
+    /// the level hash. While loading an existing level hash from the disk, the same
+    /// seeds that were used to create the level hash must be used or the slot positions
+    /// may not be calculated properly.
+    ///
+    /// The default value for these seeds is calculate using the
+    /// [crate::util::generate_seeds] function.
     pub fn seeds(&mut self, seed_1: u64, seed_2: u64) -> &mut Self {
         assert!(seed_1 > 0, "Seed 1 must be greater than 0");
         assert!(seed_2 > 0, "Seed 2 must be greater than 0");
@@ -168,16 +199,16 @@ impl LevelHashOptions {
         self
     }
 
+    /// Build the level hash instance
     pub fn build(&mut self) -> LevelInitResult {
-        let index_dir = self
-            .index_dir
-            .take()
-            .expect("Index directory must be specified");
-        let index_name = self
-            .index_name
-            .take()
-            .expect("Index name must be specified");
-        let seeds = self.seeds.take().expect("Seeds must be specified");
+        let index_dir = self.index_dir.take().ok_or_else(|| {
+            LevelInitError::InvalidArg("Index directory must be specified".to_string())
+        })?;
+        let index_name = self.index_name.take().ok_or_else(|| {
+            LevelInitError::InvalidArg("Index name must be specified".to_string())
+        })?;
+
+        let seeds = self.seeds.take().unwrap_or_else(|| generate_seeds());
         LevelHash::new(
             &index_dir,
             &index_name,
@@ -303,6 +334,44 @@ impl LevelHash {
                 .then(|| e.keyeq(&mut self.io.values, key))
                 .unwrap_or(false)
         });
+    }
+
+    fn find_slot(
+        &mut self,
+        key: &LevelKeyT,
+    ) -> Option<(ValuesEntry, _LevelIdxT, _BucketIdxT, _SlotIdxT)> {
+        let fhash = self.fhash(key);
+        let shash = self.shash(key);
+
+        let levels = if self.item_counts[0] < self.item_counts[1] {
+            // if there are more occupied slots in the bottom level
+            // than in the top level, then scan the bottom level first
+            LEVELS_REV
+        } else {
+            LEVELS
+        };
+
+        let bucket_size = self.io.meta.km_bucket_size() as _SlotIdxT;
+
+        for level in levels {
+            let fidx = self.buck_idx_lvl(fhash, level);
+            let sidx = self.buck_idx_lvl(shash, level);
+
+            for j in 0..bucket_size {
+                if let Some((e, buck)) = self
+                    .cmp_key_and_get_entry(level, fidx, j, key)
+                    .map(|e| (e, fidx))
+                    .or_else(|| {
+                        self.cmp_key_and_get_entry(level, sidx, j, key)
+                            .map(|e| (e, sidx))
+                    })
+                {
+                    return Some((e, level as _LevelIdxT, buck, j));
+                }
+            }
+        }
+
+        None
     }
 
     fn insert_entry_at_slot(
@@ -488,50 +557,33 @@ impl LevelHash {
 }
 
 impl LevelHash {
-    fn find_slot(
-        &mut self,
-        key: &LevelKeyT,
-    ) -> Option<(ValuesEntry, _LevelIdxT, _BucketIdxT, _SlotIdxT)> {
-        let fhash = self.fhash(key);
-        let shash = self.shash(key);
 
-        let levels = if self.item_counts[0] < self.item_counts[1] {
-            // if there are more occupied slots in the bottom level
-            // than in the top level, then scan the bottom level first
-            LEVELS_REV
-        } else {
-            LEVELS
-        };
-
-        let bucket_size = self.io.meta.km_bucket_size() as _SlotIdxT;
-
-        for level in levels {
-            let fidx = self.buck_idx_lvl(fhash, level);
-            let sidx = self.buck_idx_lvl(shash, level);
-
-            for j in 0..bucket_size {
-                if let Some((e, buck)) = self
-                    .cmp_key_and_get_entry(level, fidx, j, key)
-                    .map(|e| (e, fidx))
-                    .or_else(|| {
-                        self.cmp_key_and_get_entry(level, sidx, j, key)
-                            .map(|e| (e, sidx))
-                    })
-                {
-                    return Some((e, level as _LevelIdxT, buck, j));
-                }
-            }
-        }
-
-        None
-    }
-
+    /// Get the value associated with the given key.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `key` - The key to get the value for.
+    /// 
+    /// ## Returns
+    /// 
+    /// `Some` containing the raw bytes of the value if an entry is found, `None` otherwise.
     pub fn get_value(&mut self, key: &LevelKeyT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| e.0.value(&mut self.io.values));
     }
 
+    /// Get the value at the given slot position.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `level` - The level index of the slot.
+    /// * `bucket` The bucket index of the slot.
+    /// * `slot` - The slot index of the slot.
+    /// 
+    /// # Returns
+    /// 
+    /// `Some` containing the raw bytes of the value if an entry is found and is occupied, `None` otherwise.
     pub fn get_value_at(
         &mut self,
         level: Level,
@@ -541,6 +593,17 @@ impl LevelHash {
         return self.io.value(level as _LevelIdxT, bucket, slot);
     }
 
+    /// Insert the given key-value pair in the level hash.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `key` - The key for the entry. This must be a non-empty slice of bytes.
+    /// * `value` - The value for the entry. This may be an empty slice in which case, [Self::get_value]
+    ///     for the given key will return `None`.
+    /// 
+    /// ## Returns
+    /// 
+    /// `true` if the value was inserted successfully, `false` otherwise.
     pub fn insert(&mut self, key: &LevelKeyT, value: &LevelValueT) -> bool {
         if self.load_factor() >= self.load_factor_threshold && self.auto_expand {
             assert!(self.expand(), "auto expand failed");
@@ -614,18 +677,44 @@ impl LevelHash {
         false
     }
 
+    /// Remove the entry associated with the given key.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `key` - The key for the entry to remove.
+    /// 
+    /// ## Returns
+    /// 
+    /// `Some` containing the raw bytes of the value of the deleted entry (if found and is occupied), `None` otherwise.
     pub fn remove(&mut self, key: &LevelKeyT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| self.io.delete_at(e.0.addr + 1, Some(key), true));
     }
 
+    /// Update the entry associated with the given key with the new value.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `key` - The key to update the value for.
+    /// * `new_value` - The new value for the entry.
+    /// 
+    /// ## Returns
+    /// 
+    /// `Some` containing the raw bytes of the previous value of the entry (if found and is occupied), `None` otherwise.
     pub fn update(&mut self, key: &LevelKeyT, new_value: &LevelValueT) -> Option<Vec<u8>> {
         return self
             .find_slot(key)
             .and_then(|e| self.io.update_entry_value(e.1, e.2, e.3, new_value));
     }
 
+    /// Expand the level hash by one level size, doubling its capacity. This is an expensive operation
+    /// and must be used carefully. Consider enabling [LevelHashOptions::auto_expand] to automatically expand
+    /// the level hash when appropriate. A level hash can have a maximum of [LEVEL_SIZE_MAX] level size.
+    /// 
+    /// # Returns
+    /// 
+    /// Whether the level hash was expanded successfully.
     pub fn expand(&mut self) -> bool {
         assert_eq!(
             self.resize_state, NotResizing,
