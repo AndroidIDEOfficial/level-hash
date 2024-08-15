@@ -12,7 +12,8 @@ fn main() {
         .index_dir(&index_dir)
         .index_name("test")
         .seeds(seed_1, seed_2)
-        .build();
+        .build()
+        .expect("failed to create level hash");
 
     let start = std::time::Instant::now();
     for i in 0..100_000 {

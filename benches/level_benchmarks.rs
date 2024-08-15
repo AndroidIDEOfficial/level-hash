@@ -46,7 +46,7 @@ fn create_level_hash(
 
     conf(&mut options);
 
-    options.build()
+    options.build().expect("failed to crate level hash")
 }
 
 fn bench_level_insert(c: &mut Criterion) {
@@ -114,9 +114,6 @@ fn bench_level_delete(c: &mut Criterion) {
 fn bench_level_insert_auto_expand(c: &mut Criterion) {
     c.bench_function("insert_auto_expand", |b| {
         let mut hash = create_level_hash("insert_auto_expand", true, |ops| {
-            // 2^10*4+2^9*4 = 6144
-            // we're inserting 10,000 entries
-            // so this should expand
             ops.level_size(10)
                 .bucket_size(10)
                 .auto_expand(true)

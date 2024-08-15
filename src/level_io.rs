@@ -28,6 +28,11 @@ use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
 use crate::log::loge;
 use crate::meta::MetaIO;
+use crate::result::IntoLevelIOErr;
+use crate::result::IntoLevelInitErr;
+use crate::result::LevelInitError;
+use crate::result::LevelInitResult;
+use crate::result::LevelResult;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::types::LevelKeyT;
@@ -217,15 +222,21 @@ impl LevelHashIO {
         index_name: &str,
         level_size: LevelSizeT,
         bucket_size: BucketSizeT,
-    ) -> Self {
-        create_dir_all(index_dir).expect("Failed to create directories");
+    ) -> LevelResult<LevelHashIO, LevelInitError> {
+        create_dir_all(index_dir)
+            .into_lioe_msg(format!(
+                "failed to create directory: {}",
+                index_dir.display()
+            ))
+            .into_lie()?;
+
         let file_name = format!("{}{}", index_name, Self::LEVEL_INDEX_EXT);
         let index_file = index_dir.join(&file_name);
         let meta_file = index_dir.join(format!("{}{}", &file_name, Self::LEVEL_META_EXT));
         let keymap_file = index_dir.join(format!("{}{}", &file_name, Self::LEVEL_KEYMAP_EXT));
 
-        init_sparse_file(&index_file, Some(Self::VALUES_MAGIC_NUMBER));
-        init_sparse_file(&keymap_file, Some(Self::KEYMAP_MAGIC_NUMBER));
+        init_sparse_file(&index_file, Some(Self::VALUES_MAGIC_NUMBER))?;
+        init_sparse_file(&keymap_file, Some(Self::KEYMAP_MAGIC_NUMBER))?;
 
         let mut meta = MetaIO::new(&meta_file, level_size, bucket_size);
 
@@ -237,12 +248,12 @@ impl LevelHashIO {
         ftruncate_safe_path(&index_file, val_file_size);
         ftruncate_safe_path(&keymap_file, km_file_size);
 
-        LevelHashIO {
+        Ok(LevelHashIO {
             values: MappedFile::from_path(&index_file, Self::VALUES_HEADER_SIZE_BYTES, val_size),
             keymap: MappedFile::from_path(&keymap_file, Self::KEYMAP_HEADER_SIZE_BYTES, km_size),
             meta,
             interim_lvl_addr: None,
-        }
+        })
     }
 }
 

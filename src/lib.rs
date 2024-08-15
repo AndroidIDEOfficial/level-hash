@@ -30,6 +30,7 @@ include!(concat!(env!("OUT_DIR"), "/cpu_features.rs"));
 pub use level_hash::*;
 pub use util::generate_seeds;
 
+pub mod result;
 pub(crate) mod fs;
 pub(crate) mod io;
 pub(crate) mod level_io;

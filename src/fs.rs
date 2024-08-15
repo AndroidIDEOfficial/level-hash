@@ -26,14 +26,25 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 
 use crate::log::loge;
+use crate::result::IntoLevelIOErr;
+use crate::result::IntoLevelInitErr;
+use crate::result::LevelIOError;
+use crate::result::LevelInitError;
+use crate::result::LevelResult;
 use crate::size::SIZE_U64;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
-pub(crate) fn init_sparse_file(path: &Path, magic_number: Option<u64>) {
+pub(crate) fn init_sparse_file(
+    path: &Path,
+    magic_number: Option<u64>,
+) -> LevelResult<(), LevelInitError> {
     if !path.exists() {
-        write_magic_path(path, magic_number);
-        return;
+        return write_magic_path(path, magic_number);
+    }
+
+    if path.is_dir() {
+        return Err(LevelInitError::InvalidArg(format!("Expected file, but found directory: {}", path.display())));
     }
 
     assert!(!path.is_dir(), "path is a directory: {}", path.display());
@@ -50,19 +61,24 @@ pub(crate) fn init_sparse_file(path: &Path, magic_number: Option<u64>) {
                         file.set_len(0).expect("couldn't truncate file");
                         write_magic_file(&mut file, Some(magic));
                     } else {
-                        return;
+                        return Ok(());
                     }
                 }
-                Err(why) => panic!("couldn't read magic number: {}", why),
+                Err(why) => {
+                    return Err(LevelInitError::IOError(LevelIOError::with_message(
+                        format!("failed to read magic number in file: {}", path.display()),
+                        why,
+                    )))
+                }
             }
         }
     }
 
-    write_magic_file(&mut file, magic_number);
+    write_magic_file(&mut file, magic_number)
 }
 
-fn write_magic_path(path: &Path, magic_number: Option<u64>) {
-    let file = if !path.exists() {
+fn write_magic_path(path: &Path, magic_number: Option<u64>) -> LevelResult<(), LevelInitError> {
+    let mut file = if !path.exists() {
         path.parent().map(|p| create_dir_all(p));
         File::create_new(path)
     } else {
@@ -71,22 +87,22 @@ fn write_magic_path(path: &Path, magic_number: Option<u64>) {
             .write(true)
             .create(true)
             .open(path)
-    };
+    }.into_lioe_msg(format!("failed to open file: {}", path.display())).into_lie()?;
 
-    let mut file = match file {
-        Ok(file) => file,
-        Err(why) => panic!("couldn't open {}: {}", path.display(), why),
-    };
-
-    write_magic_file(&mut file, magic_number);
+    return write_magic_file(&mut file, magic_number);
 }
 
-fn write_magic_file(file: &mut File, magic_number: Option<u64>) {
+fn write_magic_file(file: &mut File, magic_number: Option<u64>) -> LevelResult<(), LevelInitError> {
     if let Some(magic) = magic_number {
-        file.seek(SeekFrom::Start(0)).expect("couldn't seek file");
+        file.seek(SeekFrom::Start(0))
+            .into_lioe_msg("failed to seek to start".to_string())
+            .into_lie()?;
         file.write_u64::<byteorder::BigEndian>(magic)
-            .expect("couldn't write magic number");
+            .into_lioe_msg("failed to write to file".to_string())
+            .into_lie()?;
     }
+
+    Ok(())
 }
 
 #[inline]

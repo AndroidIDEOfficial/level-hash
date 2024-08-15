@@ -22,6 +22,7 @@ use highway::HighwayHash;
 use highway::HighwayHasher;
 use highway::Key;
 
+use crate::result::LevelInitResult;
 use crate::level_hash::ResizeState::NotResizing;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValuesEntry;
@@ -31,7 +32,8 @@ use crate::types::LevelValueT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
-use crate::types::{BucketSizeT, LevelSizeT};
+use crate::types::LevelSizeT;
+use crate::types::BucketSizeT;
 use crate::Level::L0;
 use crate::Level::L1;
 use crate::ResizeState::Expanding;
@@ -166,7 +168,7 @@ impl LevelHashOptions {
         self
     }
 
-    pub fn build(&mut self) -> LevelHash {
+    pub fn build(&mut self) -> LevelInitResult {
         let index_dir = self
             .index_dir
             .take()
@@ -206,9 +208,9 @@ impl LevelHash {
         load_factor_threshold: f32,
         seed_1: u64,
         seed_2: u64,
-    ) -> Self {
-        let io = LevelHashIO::new(index_dir, index_name, level_size, bucket_size);
-        Self {
+    ) -> LevelInitResult {
+        let io = LevelHashIO::new(index_dir, index_name, level_size, bucket_size)?;
+        Ok(Self {
             unique_keys,
             auto_expand,
             load_factor_threshold,
@@ -218,7 +220,7 @@ impl LevelHash {
             expand_count: 0,
             resize_state: NotResizing,
             io,
-        }
+        })
     }
 
     /// Get the number of buckets in the top level.
@@ -684,7 +686,7 @@ mod test {
 
         conf(&mut options);
 
-        options.build()
+        options.build().expect("failed to create level hash")
     }
 
     fn default_level_hash(name: &str) -> LevelHash {
