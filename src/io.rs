@@ -15,26 +15,31 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::cmp::min;
-use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::os::fd::AsRawFd;
+use std::os::fd::OwnedFd;
 use std::path::Path;
 
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
+use memmap2::MmapMut;
 use memmap2::MmapOptions;
-use memmap2::{MmapMut, RemapOptions};
 
-use crate::fs::fallocate_safe_punch_file;
+use crate::__memneq;
+use crate::fs::fallocate_safe_punch;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
 /// A memory-mapped file.
 pub(crate) struct MappedFile {
     pub(crate) map: MmapMut,
-    pub(crate) file: File,
+    pub(crate) fd: OwnedFd,
+
+    #[allow(dead_code)] // used in io_android.rs
+    pub(crate) off: OffT,
     pub(crate) pos: OffT,
     pub(crate) size: OffT,
 }
@@ -44,46 +49,84 @@ impl MappedFile {
     /// offset `off` to `off + size` will be mapped.
     pub(crate) fn from_path(path: &Path, off: OffT, size: OffT) -> Self {
         let file = file_open_or_panic(path, true, true, false);
-        Self::new(file, off, size)
+        Self::new(file.into(), off, size)
     }
 
     /// Create a new [MappedFile] from the given file. The region of the file from offset
     /// `off` to `off + size` will be mapped.
-    pub(crate) fn new(file: File, off: OffT, size: OffT) -> Self {
+    pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> Self {
+        let map = Self::do_map(&fd, off, size);
+        Self {
+            map,
+            fd,
+            off,
+            pos: 0,
+            size,
+        }
+    }
+
+    pub(crate) fn do_map(fd: &OwnedFd, off: OffT, size: OffT) -> MmapMut {
         let map = unsafe {
             MmapOptions::new()
                 .offset(off)
                 .len(size as usize)
-                .map_mut(&file)
-        };
-        let map = match map {
-            Ok(map) => map,
-            Err(why) => panic!("couldn't map file: {}", why),
+                .map_mut(fd.as_raw_fd())
         };
 
-        Self {
-            map,
-            file,
-            pos: 0,
-            size,
+        match map {
+            Ok(map) => map,
+            Err(why) => panic!("couldn't map file: {}", why),
         }
+    }
+
+    pub(crate) fn memeq(&self, offset: OffT, arr: &[u8]) -> bool {
+        let len = arr.len();
+        if len == 0 || offset + len as u64 > self.size {
+            return false;
+        }
+
+        unsafe {
+            let mem_ptr = self.map.as_ptr().add(offset as usize);
+            let arr_ptr = arr.as_ptr();
+
+            if len < 16 {
+                // don't bother
+                return libc::memcmp(
+                    mem_ptr as *const libc::c_void,
+                    arr_ptr as *const libc::c_void,
+                    len,
+                ) == 0;
+            }
+
+            // Use SIMD instructions for bulk comparison
+            let mut i = 0;
+
+            if __memneq(mem_ptr, arr_ptr, &mut i, len) {
+                // not equal
+                return false;
+            }
+
+            // Compare the remaining bytes
+            if i < len {
+                let remaining = len - i;
+                let mem_rem_ptr = mem_ptr.add(i);
+                let arr_rem_ptr = arr_ptr.add(i);
+                return libc::memcmp(
+                    mem_rem_ptr as *const libc::c_void,
+                    arr_rem_ptr as *const libc::c_void,
+                    remaining,
+                ) == 0;
+            }
+        }
+
+        return true;
     }
 }
 
 impl MappedFile {
     #[inline]
     pub(crate) fn deallocate(&mut self, offset: OffT, len: OffT) {
-        fallocate_safe_punch_file(&self.file, offset, len)
-    }
-
-    pub(crate) fn remap(&mut self, size: OffT) {
-        unsafe {
-            self.map
-                .remap(size as usize, RemapOptions::new().may_move(true))
-        }
-        .expect("remap failed");
-
-        self.size = size
+        fallocate_safe_punch(self.fd.as_raw_fd(), offset, len)
     }
 }
 
@@ -116,16 +159,6 @@ impl MappedFile {
     #[inline]
     pub(crate) fn w_u64(&mut self, v: u64) {
         self.write_u64::<byteorder::BigEndian>(v).unwrap()
-    }
-
-    pub(crate) fn memcmp(&self, offset: OffT, other: &[u8]) -> i32 {
-        unsafe {
-            libc::memcmp(
-                self.map.as_ptr().add(offset as usize) as *const libc::c_void,
-                other.as_ptr() as *const libc::c_void,
-                other.len(),
-            )
-        }
     }
 }
 

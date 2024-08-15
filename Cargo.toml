@@ -3,7 +3,7 @@ name = "level-hash"
 version = "0.1.0"
 edition = "2021"
 description = "Level Hash is write-optimized and high-performance hashing index scheme for persistent memory"
-authors = [ "Akash Yadav <contact@itsaky.com>" ]
+authors = ["Akash Yadav <contact@itsaky.com>"]
 homepage = "https://github.com/AndroidIDEOfficial/level-hash"
 repository = "https://github.com/AndroidIDEOfficial/level-hash"
 license = "GPL-3"
@@ -21,6 +21,16 @@ highway = "1.2.0"
 float-cmp = "0.9.0"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 
+[build-dependencies]
+bindgen = "0.65.1"
+cmake = "0.1.50"
+
+[lib]
+crate-type = ["rlib", "dylib"]
+
 [[bench]]
 name = "level_benchmarks"
 harness = false
+
+[profile.release]
+strip = true

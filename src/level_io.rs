@@ -19,9 +19,10 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom::*;
 use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::path::Path;
 
-use crate::fs::ftruncate_safe_file;
+use crate::fs::ftruncate_safe;
 use crate::fs::ftruncate_safe_path;
 use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
@@ -89,17 +90,18 @@ impl ValuesEntry {
     }
 
     /// Compare the `entry_size` field of this entry with the given size.
-    pub fn esizecmp(&self, file: &mut MappedFile, size: u32) -> i32 {
+    pub fn esizeeq(&self, file: &mut MappedFile, size: u32) -> bool {
         let mut bytes = Self::BYTES_U32_0;
         if size > 0 {
             bytes = size.to_be_bytes();
         }
-        file.memcmp(self.addr + Self::OFF_ENTRY_SIZE, &bytes)
+        file.memeq(self.addr + Self::OFF_ENTRY_SIZE, &bytes)
     }
 
     /// Check whether this values entry has `entry_size` 0.
+    #[inline]
     pub fn is_empty(&self, file: &mut MappedFile) -> bool {
-        return self.esizecmp(file, 0) == 0;
+        return self.esizeeq(file, 0);
     }
 
     /// Get the `prev_entry` field of this entry.
@@ -144,12 +146,12 @@ impl ValuesEntry {
     }
 
     /// Compare the `key_size` field of this entry with the given value.
-    pub fn ksizecmp(&self, file: &mut MappedFile, size: u32) -> i32 {
+    pub fn ksizecmp(&self, file: &mut MappedFile, size: u32) -> bool {
         let mut bytes = Self::BYTES_U32_0;
         if size > 0 {
             bytes = size.to_be_bytes();
         }
-        return file.memcmp(self.addr + Self::OFF_KEY_SIZE, &bytes);
+        return file.memeq(self.addr + Self::OFF_KEY_SIZE, &bytes);
     }
 
     /// Get the key bytes of this entry.
@@ -159,8 +161,8 @@ impl ValuesEntry {
 
     /// Compare the key region in the memory mapped file with the given key.
     pub fn keyeq(&self, file: &mut MappedFile, other: &LevelKeyT) -> bool {
-        return self.ksizecmp(file, other.len() as u32) == 0
-            && file.memcmp(self.addr + Self::OFF_KEY, other) == 0;
+        return self.ksizecmp(file, other.len() as u32)
+            && file.memeq(self.addr + Self::OFF_KEY, other);
     }
 
     /// Get the value size of this entry.
@@ -303,7 +305,7 @@ impl LevelHashIO {
         }
 
         self.meta.set_val_file_size(new_size);
-        ftruncate_safe_file(&self.values.file, new_size);
+        ftruncate_safe(self.values.fd.as_raw_fd(), new_size);
         self.values.remap(new_size);
     }
 
@@ -312,7 +314,7 @@ impl LevelHashIO {
             return;
         }
 
-        ftruncate_safe_file(&self.keymap.file, new_size);
+        ftruncate_safe(self.keymap.fd.as_raw_fd(), new_size);
         self.keymap.remap(new_size);
     }
 

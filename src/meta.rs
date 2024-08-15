@@ -45,7 +45,11 @@ impl MetaIO {
         file.set_len(Self::META__SIZE_BYTES)
             .expect("Failed to set length of file");
 
-        let mmap = MappedFile::new(file, Self::VAL__VERSION__OFFSET, Self::META__SIZE_BYTES);
+        let mmap = MappedFile::new(
+            file.into(),
+            Self::VAL__VERSION__OFFSET,
+            Self::META__SIZE_BYTES,
+        );
         let mut meta = MetaIO { file: mmap };
 
         if meta.val_version() == 0 {

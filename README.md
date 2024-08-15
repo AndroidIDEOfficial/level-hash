@@ -3,6 +3,16 @@
 Level Hash is write-optimized and high-performance hashing index scheme for persistent memory, based on
 the work of Pengfei Zuo, Yu Hua, and Jie Wu, Huazhong University of Science and Technology.
 
+## Limitations
+
+- Linux/Android only!
+- Supported architectures :
+  - `arm`
+  - `aarch64`
+  - `i686`
+  - `x86_64`
+- Requires Android 21 or later (due to use of Neon instructions for `armv7`).
+
 ## Structure
 
 The peristent level hash is backed by three files :

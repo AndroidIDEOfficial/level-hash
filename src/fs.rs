@@ -123,8 +123,3 @@ pub(crate) fn fallocate_safe_punch(fd: libc::c_int, offset: OffT, len: OffT) {
         len,
     );
 }
-
-#[inline]
-pub(crate) fn fallocate_safe_punch_file(file: &File, offset: OffT, len: OffT) {
-    fallocate_safe_punch(file.as_raw_fd(), offset, len);
-}

@@ -14,10 +14,14 @@ fn main() {
         .seeds(seed_1, seed_2)
         .build();
 
+    let start = std::time::Instant::now();
     for i in 0..100_000 {
         assert!(hash.insert(
-            format!("key{}", i).as_bytes(),
-            format!("value{}", i).as_bytes()
+            format!("longlonglongkey{}", i).as_bytes(),
+            format!("longlonglongvalue{}", i).as_bytes()
         ));
     }
+    let end = std::time::Instant::now();
+    let duration = end.duration_since(start).as_millis();
+    println!("Inserted in {}ms", duration);
 }
