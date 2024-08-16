@@ -47,9 +47,6 @@ jobs:
           clang \
           lld \
           cmake \
-          gcc-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi \
-          gcc-i686-linux-gnu \
           gcc-multilib
     - name: Setup Android NDK
       run: |
