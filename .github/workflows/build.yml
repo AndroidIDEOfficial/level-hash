@@ -62,7 +62,9 @@ jobs:
         echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$(which i686-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
         echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$(which x86_64-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
     - name: Build
-      run: cargo build --target ${{ matrix.target }}
+      run: |
+        . "$HOME/.cargo/env"
+        cargo build --target ${{ matrix.target }}
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
