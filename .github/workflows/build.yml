@@ -10,21 +10,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_linux:
-    name: Build ${{ matrix.target }}
+  build_android:
+    name: Build for Android
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         target:
-          - aarch64-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabi
-          - i686-unknown-linux-gnu
-          - x86_64-unknown-linux-gnu
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - i686-linux-android
+          - x86_64-linux-android
     env:
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-ld
-      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_LINKER: arm-linux-gnueabi-ld
-      CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER: i686-linux-gnu-ld
+      NDK_VERSION: r27
+      ANDROID_PLATFORM: 26
     steps:
     - name: Cancel previous runs
       uses: styfle/cancel-workflow-action@0.12.1
@@ -42,17 +41,67 @@ jobs:
        rustup target add ${{ matrix.target }}
     - name: Install packages
       run: |
-        sudo apt-get install -y gcc-aarch64-linux-gnu && \
-        sudo apt-get install -y gcc-arm-linux-gnueabi  && \
-        sudo apt-get install -y gcc-i686-linux-gnu
+        sudo apt-get install -y \
+          libclang-dev \
+          llvm-dev \
+          clang \
+          lld \
+          cmake \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          gcc-i686-linux-gnu
+    - name: Setup Android NDK
+      run: |
+        wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip -O /tmp/android-ndk.zip
+        mkdir -p /usr/lib
+        unzip -d /usr/lib /tmp/android-ndk.zip
+        echo "ANDROID_NDK_HOME=/usr/lib/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+        echo "NDK=${"ANDROID_NDK_HOME}" >> $GITHUB_ENV
+        echo "PATH=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
+        echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(which aarch64-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
+        echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$(which armv7a-linux-androideabi${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
+        echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$(which i686-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
+        echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$(which x86_64-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
     - name: Build
       run: cargo build --target ${{ matrix.target }}
-    - name: Run tests
-      if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
-      run: cargo test
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.target }}
         path: |
           target/${{ matrix.target }}/liblevel_hash.so
+
+  build_linux:
+    name: Build for Linux
+    runs-on: ubuntu-latest
+    steps:
+    - name: Cancel previous runs
+      uses: styfle/cancel-workflow-action@0.12.1
+      with:
+        access_token: ${{ github.token }}
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    - name: Setup Rust
+      run: |
+       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s  -- -y
+       rustup install nightly
+       rustup default nightly
+    - name: Install packages
+      run: |
+        sudo apt-get install -y gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          gcc-i686-linux-gnu
+    - name: Build
+      run: cargo build
+    - name: Run tests
+      run: cargo test
+    - name: Run test binary
+      run: ./target/debug/level-hash
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: x86_64-unknown-linux-gnu
+        path: |
+          target/debug/liblevel_hash.so
