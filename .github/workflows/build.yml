@@ -53,9 +53,8 @@ jobs:
     - name: Setup Android NDK
       run: |
         wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip -O /tmp/android-ndk.zip
-        mkdir -p /usr/lib
-        unzip -d /usr/lib /tmp/android-ndk.zip
-        echo "ANDROID_NDK_HOME=/usr/lib/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+        unzip -d ~/ /tmp/android-ndk.zip
+        echo "ANDROID_NDK_HOME=~/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
         echo "NDK=${"ANDROID_NDK_HOME}" >> $GITHUB_ENV
         echo "PATH=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_ENV
         echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(which aarch64-linux-android${ANDROID_PLATFORM}-clang)" >> $GITHUB_ENV
