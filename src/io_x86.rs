@@ -32,7 +32,6 @@ pub(crate) unsafe fn __memneq(
     len_compared: &mut usize,
     len: usize,
 ) -> bool {
-
     #[cfg(target_arch = "x86")]
     use core::arch::x86::{__m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8};
 

@@ -26,21 +26,29 @@ use crate::fs::ftruncate_safe;
 use crate::fs::ftruncate_safe_path;
 use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
-use crate::log::loge;
 use crate::meta::MetaIO;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
+use crate::result::IntoLevelInsertionErr;
+use crate::result::IntoLevelUpdateErr;
+use crate::result::LevelClearResult;
 use crate::result::LevelInitError;
-use crate::result::LevelInitResult;
+use crate::result::LevelInsertionError;
+use crate::result::LevelMapError;
+use crate::result::LevelRemapResult;
 use crate::result::LevelResult;
+use crate::result::LevelUpdateError;
+use crate::result::LevelUpdateResult;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
+use crate::types::BucketSizeT;
 use crate::types::LevelKeyT;
+use crate::types::LevelSizeT;
 use crate::types::LevelValueT;
+use crate::types::OffT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
-use crate::types::{BucketSizeT, LevelSizeT, OffT};
 
 pub const LEVEL_VALUES_VERSION: u32 = 1;
 pub const LEVEL_KEYMAP_VERSION: u32 = 1;
@@ -98,7 +106,7 @@ impl ValuesEntry {
     pub fn esizeeq(&self, file: &mut MappedFile, size: u32) -> bool {
         let mut bytes = Self::BYTES_U32_0;
         if size > 0 {
-            bytes = size.to_be_bytes();
+            bytes = size.to_le_bytes();
         }
         file.memeq(self.addr + Self::OFF_ENTRY_SIZE, &bytes)
     }
@@ -126,19 +134,16 @@ impl ValuesEntry {
     /// ## Returns
     ///
     /// The key bytes if `read_key` is true and the size of key is > 0, `None` otherwise.
-    pub(super) fn seek_over_key(
-        &self,
-        file: &mut MappedFile,
-        read_key: bool,
-    ) -> (u32, Option<Vec<u8>>) {
+    pub(super) fn seek_over_key(&self, file: &mut MappedFile, read_key: bool) -> (u32, Vec<u8>) {
         let size = self.key_size(file);
-        let mut result = None;
+        let result: Vec<u8>;
         if size > 0 && read_key {
             let mut key = vec![0u8; size as usize];
             file.read_exact(&mut key).unwrap();
-            result = Some(key)
+            result = key;
         } else {
             file.seek(Current(size as i64)).unwrap();
+            result = vec![];
         }
 
         return (size, result);
@@ -154,13 +159,13 @@ impl ValuesEntry {
     pub fn ksizecmp(&self, file: &mut MappedFile, size: u32) -> bool {
         let mut bytes = Self::BYTES_U32_0;
         if size > 0 {
-            bytes = size.to_be_bytes();
+            bytes = size.to_le_bytes();
         }
         return file.memeq(self.addr + Self::OFF_KEY_SIZE, &bytes);
     }
 
     /// Get the key bytes of this entry.
-    pub fn key(&self, file: &mut MappedFile) -> Option<Vec<u8>> {
+    pub fn key(&self, file: &mut MappedFile) -> Vec<u8> {
         return self.seek_over_key(file, true).1;
     }
 
@@ -177,27 +182,27 @@ impl ValuesEntry {
     }
 
     /// Get the value bytes of this entry, and the size of the value.
-    pub fn val_with_size(&self, file: &mut MappedFile) -> (u32, Option<Vec<u8>>) {
+    pub fn val_with_size(&self, file: &mut MappedFile) -> (u32, Vec<u8>) {
         self.seek_over_key(file, false);
         let size = file.r_u32();
         if size == 0 {
-            return (size, None);
+            return (size, vec![]);
         }
 
         let mut value = vec![0u8; size as usize];
         file.read_exact(&mut value).unwrap();
-        (size, Some(value))
+        (size, value)
     }
 
     /// Get the value bytes of this entry, only if the value size is > 0.
-    pub fn value(&self, file: &mut MappedFile) -> Option<Vec<u8>> {
+    pub fn value(&self, file: &mut MappedFile) -> Vec<u8> {
         let size = self.value_size(file);
         if size > 0 {
             let mut value = vec![0u8; size as usize];
             file.read_exact(value.as_mut_slice()).unwrap();
-            Some(value)
+            value
         } else {
-            None
+            vec![]
         }
     }
 }
@@ -224,11 +229,11 @@ impl LevelHashIO {
         bucket_size: BucketSizeT,
     ) -> LevelResult<LevelHashIO, LevelInitError> {
         create_dir_all(index_dir)
-            .into_lioe_msg(format!(
+            .into_lvl_io_e_msg(format!(
                 "failed to create directory: {}",
                 index_dir.display()
             ))
-            .into_lie()?;
+            .into_lvl_init_err()?;
 
         let file_name = format!("{}{}", index_name, Self::LEVEL_INDEX_EXT);
         let index_file = index_dir.join(&file_name);
@@ -238,7 +243,7 @@ impl LevelHashIO {
         init_sparse_file(&index_file, Some(Self::VALUES_MAGIC_NUMBER))?;
         init_sparse_file(&keymap_file, Some(Self::KEYMAP_MAGIC_NUMBER))?;
 
-        let mut meta = MetaIO::new(&meta_file, level_size, bucket_size);
+        let mut meta = MetaIO::new(&meta_file, level_size, bucket_size)?;
 
         let val_size = meta.val_file_size();
         let km_size = meta.km_size();
@@ -248,9 +253,14 @@ impl LevelHashIO {
         ftruncate_safe_path(&index_file, val_file_size);
         ftruncate_safe_path(&keymap_file, km_file_size);
 
+        let values = MappedFile::from_path(&index_file, Self::VALUES_HEADER_SIZE_BYTES, val_size)
+            .into_lvl_init_err()?;
+        let keymap = MappedFile::from_path(&keymap_file, Self::KEYMAP_HEADER_SIZE_BYTES, km_size)
+            .into_lvl_init_err()?;
+
         Ok(LevelHashIO {
-            values: MappedFile::from_path(&index_file, Self::VALUES_HEADER_SIZE_BYTES, val_size),
-            keymap: MappedFile::from_path(&keymap_file, Self::KEYMAP_HEADER_SIZE_BYTES, km_size),
+            values,
+            keymap,
             meta,
             interim_lvl_addr: None,
         })
@@ -310,23 +320,27 @@ impl LevelHashIO {
         self.keymap.deallocate(Self::km_real_offset(off), len)
     }
 
-    fn val_resize(&mut self, new_size: OffT) {
+    fn val_resize(&mut self, new_size: OffT) -> LevelRemapResult {
         if self.meta.val_file_size() == new_size {
-            return;
+            return Ok(());
         }
 
         self.meta.set_val_file_size(new_size);
         ftruncate_safe(self.values.fd.as_raw_fd(), new_size);
-        self.values.remap(new_size);
+        self.values.remap(new_size)?;
+
+        Ok(())
     }
 
-    fn km_resize(&mut self, new_size: OffT) {
+    fn km_resize(&mut self, new_size: OffT) -> LevelRemapResult {
         if self.meta.km_size() == new_size {
-            return;
+            return Ok(());
         }
 
         ftruncate_safe(self.keymap.fd.as_raw_fd(), new_size);
-        self.keymap.remap(new_size);
+        self.keymap.remap(new_size)?;
+
+        Ok(())
     }
 
     /// Get the address of the slot entry in the keymap file for the given level, bucket and slot.
@@ -419,15 +433,11 @@ impl LevelHashIO {
     }
 
     /// Get the value for the given level, bucket and slot.
-    pub fn value(
-        &mut self,
-        level: _LevelIdxT,
-        bucket: _BucketIdxT,
-        slot: _SlotIdxT,
-    ) -> Option<Vec<u8>> {
+    pub fn value(&mut self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> Vec<u8> {
         self.val_entry_for_slot(level, bucket, slot)
             .take_if(|entry| !entry.is_empty(&mut self.values))
-            .and_then(|entry| entry.value(&mut self.values))
+            .map(|entry| entry.value(&mut self.values))
+            .unwrap_or(vec![])
     }
 }
 
@@ -442,30 +452,21 @@ impl LevelHashIO {
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
         new_value: &LevelValueT,
-    ) -> Option<Vec<u8>> {
+    ) -> LevelUpdateResult {
         let slot_addr = self.slot_addr(level, bucket, slot);
         self.keymap.seek(Start(slot_addr)).unwrap();
 
         let val_addr = self.keymap.r_u64();
         if val_addr == Self::POS_INVALID {
-            loge(&format!(
-                "Cannot update an empty slot: level={}, bucket={}, slot={}",
-                level, bucket, slot
-            ));
-            return None;
+            return Err(LevelUpdateError::SlotEmpty);
         }
 
         let entry = ValuesEntry::at(val_addr - 1);
         if entry.is_empty(&mut self.values) {
-            // the entry is not occupied
-            loge(&format!(
-                "Cannot update an empty entry: level={}, bucket={}, slot={}",
-                level, bucket, slot
-            ));
-            return None;
+            return Err(LevelUpdateError::EntryNotOccupied);
         }
 
-        let key = entry.key(&mut self.values).unwrap();
+        let key = entry.key(&mut self.values);
         let val_size_pos = self.values.pos;
         let (val_size, val) = entry.val_with_size(&mut self.values);
         let new_val_size = new_value.len() as u32;
@@ -473,8 +474,9 @@ impl LevelHashIO {
         if val_size < new_val_size {
             // the existing entry cannot be used as it is too small,
             // so we need to re-allocate a new entry with appropriate size
-            self.append_entry_at_slot(slot_addr, &key, new_value);
-            return val;
+            self.append_entry_at_slot(slot_addr, &key, new_value)
+                .into_lvl_upd_err()?;
+            return Ok(val);
         }
 
         self.values.seek(Start(val_size_pos)).unwrap();
@@ -491,7 +493,7 @@ impl LevelHashIO {
             self.val_deallocate(offset, (val_size - new_val_size) as OffT);
         }
 
-        return val;
+        Ok(val)
     }
 
     /// Create a new entry or update the existing entry at the given slot position. If the given
@@ -506,12 +508,12 @@ impl LevelHashIO {
         slot: _SlotIdxT,
         key: &LevelKeyT,
         value: &LevelValueT,
-    ) {
+    ) -> LevelResult<(), LevelInsertionError> {
         let slot_addr = self.slot_addr(level, bucket, slot);
 
         if key.len() == 0 {
             self.delete_at_slot(slot_addr, key, false);
-            return;
+            return Ok(());
         }
 
         self.keymap.seek(Start(slot_addr)).unwrap();
@@ -519,11 +521,13 @@ impl LevelHashIO {
         let existing_val_addr = self.keymap.r_u64();
         let is_update = existing_val_addr > Self::POS_INVALID;
 
-        self.append_entry_at_slot(slot_addr, key, value);
+        self.append_entry_at_slot(slot_addr, key, value)?;
 
         if is_update {
             self.delete_at(existing_val_addr, None, false);
         }
+
+        Ok(())
     }
 
     /// Append a new entry to the values file at the given slot position. The slot entry at the given
@@ -533,7 +537,7 @@ impl LevelHashIO {
         slot_addr: OffT,
         key: &LevelKeyT,
         value: &LevelValueT,
-    ) -> bool {
+    ) -> LevelResult<(), LevelInsertionError> {
         let tail_addr = self.meta.val_tail_addr();
 
         // this may be the first entry in the values file
@@ -543,7 +547,8 @@ impl LevelHashIO {
             .map(|e| e.next_entry(&mut self.values))
             .unwrap_or(1);
         if this_val_addr + 4 * Self::KB_1 > self.meta.val_file_size() {
-            self.val_resize(this_val_addr - 1 + Self::VALUES_SEGMENT_SIZE_BYTES);
+            self.val_resize(this_val_addr - 1 + Self::VALUES_SEGMENT_SIZE_BYTES)
+                .into_lvl_ins_err()?;
         }
 
         // valuesResize call above will reset the position to 0,
@@ -553,7 +558,7 @@ impl LevelHashIO {
         if self.values.r_u32() > 0 {
             // entry_size > 0
             // entry is occupied
-            return false;
+            return Err(LevelInsertionError::DuplicateKey);
         }
 
         let entry_start = self.values.pos;
@@ -594,7 +599,7 @@ impl LevelHashIO {
         self.keymap.seek(Start(slot_addr)).unwrap();
         self.keymap.w_u64(this_val_addr);
 
-        return true;
+        Ok(())
     }
 
     /// Write an object to the values file. This directly writes the object to the values file,
@@ -665,7 +670,7 @@ impl LevelHashIO {
             // if we have been provided with a key, then check if the key matches
             // if not, then do not delete
             if !entry.keyeq(&mut self.values, k) {
-                return read_value.then(|| entry.value(&mut self.values)).flatten();
+                return read_value.then(|| entry.value(&mut self.values));
             }
         }
 
@@ -746,7 +751,7 @@ impl LevelHashIO {
     }
 
     /// Clear all entries in the keymap and values files.
-    pub(crate) fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) -> LevelClearResult {
         self.meta.set_val_head_addr(0);
         self.meta.set_val_tail_addr(0);
         self.meta.set_km_l0_addr(0);
@@ -758,15 +763,17 @@ impl LevelHashIO {
 
         let km_size = l1_addr + (l1_addr >> 1);
 
-        self.km_resize(Self::km_real_offset(km_size));
+        self.km_resize(Self::km_real_offset(km_size))?;
         self.km_deallocate(0, km_size);
 
-        self.val_resize(Self::val_real_offset(Self::VALUES_SEGMENT_SIZE_BYTES));
+        self.val_resize(Self::val_real_offset(Self::VALUES_SEGMENT_SIZE_BYTES))?;
         self.val_deallocate(0, Self::VALUES_SEGMENT_SIZE_BYTES);
+
+        Ok(())
     }
 
     /// Prepare the interim level for the given number of buckets.
-    pub(crate) fn prepare_interim(&mut self, bucket_count: u32) {
+    pub(crate) fn prepare_interim(&mut self, bucket_count: u32) -> LevelResult<(), LevelMapError> {
         assert!(self.interim_lvl_addr.is_none());
 
         let interim_size: OffT = bucket_count as OffT
@@ -775,8 +782,10 @@ impl LevelHashIO {
 
         // ensure the keymap can accomodate the interim level
         let len = self.keymap.size;
-        self.km_resize(Self::km_real_offset(len) + interim_size);
+        self.km_resize(Self::km_real_offset(len) + interim_size)?;
         self.interim_lvl_addr = Some(len);
+
+        Ok(())
     }
 
     /// Move the given slot to the interim level, returning `true` if the move was successful.

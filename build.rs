@@ -39,19 +39,31 @@ fn main() {
     }
 
     let mut config = cmake::Config::new(cpufeat);
-    config.out_dir(cpufeat_build)
-        .define("BUILD_TESTING", "OFF");
+    config.out_dir(cpufeat_build).define("BUILD_TESTING", "OFF");
     if os == "android" {
-        let ndk_home = PathBuf::from(env::var("ANDROID_NDK_HOME").expect("ANDROID_NDK_HOME variable is not set."));
+        let ndk_home = PathBuf::from(
+            env::var("ANDROID_NDK_HOME").expect("ANDROID_NDK_HOME variable is not set."),
+        );
         config
-            .define("CMAKE_TOOLCHAIN_FILE", format!("{}", ndk_home.join("build/cmake/android.toolchain.cmake").display()))
-            .define("ANDROID_ABI", match &arch[..] {
-                "aarch64" => "arm64-v8a",
-                "arm" => "armeabi-v7a",
-                "x86" => "x86",
-                "x86_64" => "x86_64",
-                _ => panic!("Unknown Android arch: {}", arch)
-            })
+            .define(
+                "CMAKE_TOOLCHAIN_FILE",
+                format!(
+                    "{}",
+                    ndk_home
+                        .join("build/cmake/android.toolchain.cmake")
+                        .display()
+                ),
+            )
+            .define(
+                "ANDROID_ABI",
+                match &arch[..] {
+                    "aarch64" => "arm64-v8a",
+                    "arm" => "armeabi-v7a",
+                    "x86" => "x86",
+                    "x86_64" => "x86_64",
+                    _ => panic!("Unknown Android arch: {}", arch),
+                },
+            )
             .define("ANDROID_PLATFORM", "android-26");
     }
 

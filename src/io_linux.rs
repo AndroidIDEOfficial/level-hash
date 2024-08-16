@@ -18,16 +18,20 @@
 use memmap2::RemapOptions;
 
 use crate::io::MappedFile;
+use crate::result::{IntoLevelIOErr, IntoLevelMapErr, LevelMapError, LevelResult};
 use crate::types::OffT;
 
 impl MappedFile {
-    pub(crate) fn remap(&mut self, size: OffT) {
+    pub(crate) fn remap(&mut self, size: OffT) -> LevelResult<(), LevelMapError> {
         unsafe {
             self.map
                 .remap(size as usize, RemapOptions::new().may_move(true))
         }
-        .expect("remap failed");
+        .into_lvl_io_e_msg("failed to remap file".to_string())
+        .into_lvl_mmap_err()?;
 
-        self.size = size
+        self.size = size;
+
+        Ok(())
     }
 }

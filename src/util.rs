@@ -55,3 +55,19 @@ pub fn generate_seeds() -> (u64, u64) {
 
     (fseed, sseed)
 }
+
+pub(crate) trait IsTrue {
+    fn is_true(self) -> bool;
+}
+
+impl IsTrue for Option<bool> {
+    fn is_true(self) -> bool {
+        self.unwrap_or(false)
+    }
+}
+
+impl<E> IsTrue for Result<bool, E> {
+    fn is_true(self) -> bool {
+        self.unwrap_or(false)
+    }
+}

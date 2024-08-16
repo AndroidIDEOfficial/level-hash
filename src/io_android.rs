@@ -16,13 +16,16 @@
  */
 
 use crate::io::MappedFile;
+use crate::result::{LevelMapError, LevelResult};
 use crate::types::OffT;
 
 impl MappedFile {
-    pub(crate) fn remap(&mut self, size: OffT) {
+    pub(crate) fn remap(&mut self, size: OffT) -> LevelResult<(), LevelMapError> {
         // reassigning drops the previous mmap which unmaps the file
         // then we map the file again with the new size
-        self.map = MappedFile::do_map(&self.fd, self.off, size);
+        self.map = MappedFile::do_map(&self.fd, self.off, size)?;
         self.size = size;
+
+        Ok(())
     }
 }

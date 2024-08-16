@@ -13,7 +13,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
- */ 
+ */
 
 #[cfg(not(target_feature = "neon"))]
 compile_error!("Required feature: neon");

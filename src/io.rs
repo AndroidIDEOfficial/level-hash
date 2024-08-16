@@ -15,6 +15,7 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::cmp::min;
+use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -23,6 +24,7 @@ use std::os::fd::AsRawFd;
 use std::os::fd::OwnedFd;
 use std::path::Path;
 
+use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use memmap2::MmapMut;
@@ -30,8 +32,14 @@ use memmap2::MmapOptions;
 
 use crate::__memneq;
 use crate::fs::fallocate_safe_punch;
+use crate::result::IntoLevelIOErr;
+use crate::result::IntoLevelMapErr;
+use crate::result::LevelMapError;
+use crate::result::LevelResult;
 use crate::types::OffT;
-use crate::util::file_open_or_panic;
+
+/// The endian-ness of the file I/O operations in level hash.
+pub(crate) type IOEndianness = LittleEndian;
 
 /// A memory-mapped file.
 pub(crate) struct MappedFile {
@@ -47,36 +55,47 @@ pub(crate) struct MappedFile {
 impl MappedFile {
     /// Create a new [MappedFile] from the given file path. The region of the file from
     /// offset `off` to `off + size` will be mapped.
-    pub(crate) fn from_path(path: &Path, off: OffT, size: OffT) -> Self {
-        let file = file_open_or_panic(path, true, true, false);
+    pub(crate) fn from_path(
+        path: &Path,
+        off: OffT,
+        size: OffT,
+    ) -> LevelResult<Self, LevelMapError> {
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(path)
+            .into_lvl_io_e_msg(format!("failed to open file: {}", path.display()))?;
+
         Self::new(file.into(), off, size)
     }
 
     /// Create a new [MappedFile] from the given file. The region of the file from offset
     /// `off` to `off + size` will be mapped.
-    pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> Self {
-        let map = Self::do_map(&fd, off, size);
-        Self {
+    pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
+        let map = Self::do_map(&fd, off, size)?;
+        Ok(Self {
             map,
             fd,
             off,
             pos: 0,
             size,
-        }
+        })
     }
 
-    pub(crate) fn do_map(fd: &OwnedFd, off: OffT, size: OffT) -> MmapMut {
-        let map = unsafe {
+    pub(crate) fn do_map(
+        fd: &OwnedFd,
+        off: OffT,
+        size: OffT,
+    ) -> LevelResult<MmapMut, LevelMapError> {
+        unsafe {
             MmapOptions::new()
                 .offset(off)
                 .len(size as usize)
                 .map_mut(fd.as_raw_fd())
-        };
-
-        match map {
-            Ok(map) => map,
-            Err(why) => panic!("couldn't map file: {}", why),
         }
+        .into_lvl_io_e_msg("failed to memory map file".to_string())
+        .into_lvl_mmap_err()
     }
 
     pub(crate) fn memeq(&self, offset: OffT, arr: &[u8]) -> bool {
@@ -138,12 +157,12 @@ impl MappedFile {
 
     #[inline]
     pub(crate) fn r_u32(&mut self) -> u32 {
-        return self.read_u32::<byteorder::BigEndian>().unwrap();
+        return self.read_u32::<IOEndianness>().unwrap();
     }
 
     #[inline]
     pub(crate) fn r_u64(&mut self) -> u64 {
-        return self.read_u64::<byteorder::BigEndian>().unwrap();
+        return self.read_u64::<IOEndianness>().unwrap();
     }
 
     #[inline]
@@ -153,12 +172,12 @@ impl MappedFile {
 
     #[inline]
     pub(crate) fn w_u32(&mut self, v: u32) {
-        self.write_u32::<byteorder::BigEndian>(v).unwrap()
+        self.write_u32::<IOEndianness>(v).unwrap()
     }
 
     #[inline]
     pub(crate) fn w_u64(&mut self, v: u64) {
-        self.write_u64::<byteorder::BigEndian>(v).unwrap()
+        self.write_u64::<IOEndianness>(v).unwrap()
     }
 }
 

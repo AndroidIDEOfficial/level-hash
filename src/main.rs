@@ -17,10 +17,12 @@ fn main() {
 
     let start = std::time::Instant::now();
     for i in 0..100_000 {
-        assert!(hash.insert(
-            format!("longlonglongkey{}", i).as_bytes(),
-            format!("longlonglongvalue{}", i).as_bytes()
-        ));
+        assert!(hash
+            .insert(
+                format!("longlonglongkey{}", i).as_bytes(),
+                format!("longlonglongvalue{}", i).as_bytes()
+            )
+            .is_ok());
     }
     let end = std::time::Instant::now();
     let duration = end.duration_since(start).as_millis();

@@ -18,9 +18,9 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+#![feature(assert_matches)]
+#![cfg_attr(target_arch = "arm", feature(stdarch_arm_neon_intrinsics))]
 
-#![cfg_attr(target_arch = "arm", feature(stdarch_arm_neon_intrinsics))] 
- 
 // Include the generated Rust bindings for libcpu_features
 // Needed only on armv7a as Neon support is optional on such machines
 // aarch64 is guaranteed to have Neon support
@@ -30,12 +30,12 @@ include!(concat!(env!("OUT_DIR"), "/cpu_features.rs"));
 pub use level_hash::*;
 pub use util::generate_seeds;
 
-pub mod result;
 pub(crate) mod fs;
 pub(crate) mod io;
 pub(crate) mod level_io;
 pub(crate) mod log;
 pub(crate) mod meta;
+pub mod result;
 pub(crate) mod size;
 pub(crate) mod types;
 pub mod util;

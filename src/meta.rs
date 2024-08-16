@@ -15,6 +15,7 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::cmp::min;
+use std::fs::File;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::path::Path;
@@ -25,31 +26,51 @@ use crate::level_io::LevelHashIO;
 use crate::level_io::LEVEL_KEYMAP_VERSION;
 use crate::level_io::LEVEL_VALUES_VERSION;
 use crate::level_io::VALUES_SEGMENT_SIZE_DEFAULT;
+use crate::result::IntoLevelIOErr;
+use crate::result::IntoLevelInitErr;
+use crate::result::LevelInitError;
+use crate::result::LevelResult;
 use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::size::SIZE_U8;
 use crate::types::BucketSizeT;
 use crate::types::LevelSizeT;
 use crate::types::OffT;
-use crate::util::file_open_or_panic;
 
 pub struct MetaIO {
     pub(crate) file: MappedFile,
 }
 
 impl MetaIO {
-    pub fn new(path: &Path, level_size: LevelSizeT, bucket_size: BucketSizeT) -> MetaIO {
-        init_sparse_file(path, None);
+    pub fn new(
+        path: &Path,
+        level_size: LevelSizeT,
+        bucket_size: BucketSizeT,
+    ) -> LevelResult<MetaIO, LevelInitError> {
+        init_sparse_file(path, None)?;
 
-        let file = file_open_or_panic(path, true, true, false);
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(path)
+            .into_lvl_io_e_msg(format!("failed to open file: {}", path.display()))
+            .into_lvl_init_err()?;
+
         file.set_len(Self::META__SIZE_BYTES)
-            .expect("Failed to set length of file");
+            .into_lvl_io_e_msg(format!(
+                "failed to set length [{}] of file: {}",
+                Self::META__SIZE_BYTES,
+                path.display()
+            ))
+            .into_lvl_init_err()?;
 
         let mmap = MappedFile::new(
             file.into(),
             Self::VAL__VERSION__OFFSET,
             Self::META__SIZE_BYTES,
-        );
+        )
+        .into_lvl_init_err()?;
         let mut meta = MetaIO { file: mmap };
 
         if meta.val_version() == 0 {
@@ -80,7 +101,7 @@ impl MetaIO {
             meta.set_km_l1_addr(addr);
         }
 
-        return meta;
+        Ok(meta)
     }
 }
 
@@ -270,6 +291,7 @@ mod tests {
 
         let meta_file = meta_dir.join(format!("{}.storage._meta", name));
         MetaIO::new(meta_file.as_path(), LEVEL_SIZE_DEFAULT, BUCKET_SIZE_DEFAULT)
+            .expect("failed to create meta file")
     }
 
     #[test]

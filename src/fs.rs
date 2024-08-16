@@ -25,12 +25,13 @@ use std::path::Path;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 
+use crate::io::IOEndianness;
 use crate::log::loge;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
-use crate::result::LevelIOError;
 use crate::result::LevelInitError;
 use crate::result::LevelResult;
+use crate::result::StdIOError;
 use crate::size::SIZE_U64;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
@@ -44,28 +45,36 @@ pub(crate) fn init_sparse_file(
     }
 
     if path.is_dir() {
-        return Err(LevelInitError::InvalidArg(format!("Expected file, but found directory: {}", path.display())));
+        return Err(LevelInitError::InvalidArg(format!(
+            "Expected file, but found directory: {}",
+            path.display()
+        )));
     }
 
-    assert!(!path.is_dir(), "path is a directory: {}", path.display());
-
-    let mut file = file_open_or_panic(path, true, true, false);
+    let mut file = File::options()
+        .read(true)
+        .write(true)
+        .create(false)
+        .open(path)
+        .into_lvl_io_e_msg(format!("failed to open file: {}", path.display()))
+        .into_lvl_init_err()?;
 
     if let Some(magic) = magic_number {
-        if file.metadata().expect("couldn't get metadata").len() >= SIZE_U64 {
-            match file.read_u64::<byteorder::BigEndian>() {
+        if file.metadata().map(|m| m.len()).unwrap_or(0) >= SIZE_U64 {
+            match file.read_u64::<IOEndianness>() {
                 Ok(magic_f) => {
                     if magic_f != magic {
                         loge(&format!("magic number mismatch: {} != {}", magic_f, magic));
                         loge(&format!("removing {}", path.display()));
-                        file.set_len(0).expect("couldn't truncate file");
-                        write_magic_file(&mut file, Some(magic));
+                        file.set_len(0)
+                            .into_lvl_io_e_msg("couldn't truncate file".to_string())?;
+                        write_magic_file(&mut file, Some(magic))?;
                     } else {
                         return Ok(());
                     }
                 }
                 Err(why) => {
-                    return Err(LevelInitError::IOError(LevelIOError::with_message(
+                    return Err(LevelInitError::IOError(StdIOError::with_message(
                         format!("failed to read magic number in file: {}", path.display()),
                         why,
                     )))
@@ -87,7 +96,9 @@ fn write_magic_path(path: &Path, magic_number: Option<u64>) -> LevelResult<(), L
             .write(true)
             .create(true)
             .open(path)
-    }.into_lioe_msg(format!("failed to open file: {}", path.display())).into_lie()?;
+    }
+    .into_lvl_io_e_msg(format!("failed to open file: {}", path.display()))
+    .into_lvl_init_err()?;
 
     return write_magic_file(&mut file, magic_number);
 }
@@ -95,11 +106,11 @@ fn write_magic_path(path: &Path, magic_number: Option<u64>) -> LevelResult<(), L
 fn write_magic_file(file: &mut File, magic_number: Option<u64>) -> LevelResult<(), LevelInitError> {
     if let Some(magic) = magic_number {
         file.seek(SeekFrom::Start(0))
-            .into_lioe_msg("failed to seek to start".to_string())
-            .into_lie()?;
-        file.write_u64::<byteorder::BigEndian>(magic)
-            .into_lioe_msg("failed to write to file".to_string())
-            .into_lie()?;
+            .into_lvl_io_e_msg("failed to seek to start".to_string())
+            .into_lvl_init_err()?;
+        file.write_u64::<IOEndianness>(magic)
+            .into_lvl_io_e_msg("failed to write to file".to_string())
+            .into_lvl_init_err()?;
     }
 
     Ok(())

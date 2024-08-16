@@ -48,8 +48,8 @@ pub(crate) unsafe fn __memneq(
     }
 
     use core::arch::arm::vceqq_u8;
-    use core::arch::arm::vld1q_u8;
     use core::arch::arm::vgetq_lane_u64;
+    use core::arch::arm::vld1q_u8;
     use core::arch::arm::vreinterpretq_u64_u8;
 
     let mut i = 0usize;
@@ -58,9 +58,7 @@ pub(crate) unsafe fn __memneq(
         let rchunk = vld1q_u8(rhs.add(i));
         let cmp = vceqq_u8(lchunk, rchunk);
         let cast = vreinterpretq_u64_u8(cmp);
-        if vgetq_lane_u64(cast, 0) != 0xFF ||
-           vgetq_lane_u64(cast, 1) != 0xFF
-        {
+        if vgetq_lane_u64(cast, 0) != 0xFF || vgetq_lane_u64(cast, 1) != 0xFF {
             return false;
         }
         i += 16;
