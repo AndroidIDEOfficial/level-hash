@@ -36,6 +36,11 @@ jobs:
        rustup install nightly && \
        rustup default nightly && \
        rustup target add ${{ matrix.target }}
+    - name: Install packages
+      run: |
+        sudo apt-get install gcc-aarch64-linux-gnu && \
+        sudo apt-get install gcc-arm-linux-gnu && \
+        sudo apt-get install gcc-i686-linux-gnu
     - name: Build
       run: cargo build --target ${{ matrix.target }}
     - name: Run tests
