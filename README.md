@@ -11,7 +11,6 @@ the work of Pengfei Zuo, Yu Hua, and Jie Wu, Huazhong University of Science and 
   - `aarch64`
   - `i686`
   - `x86_64`
-- Requires Android 21 or later (due to use of Neon instructions for `armv7`).
 
 ## Structure
 
@@ -47,19 +46,23 @@ The `keymap` struct contains fields :
    and the bottom level (index 1).
 - `interim_level` - The temporary level that is used to move the slots from
    the bottom level to the yet-to-be top level during expansion process.
+
 The `level` struct contains fields :
 - `buckets` - The buckets of the level. The number of buckets depends on the
    index of the level and can be calculated using `2^(level_size-level_idx)`
-   where `level_size` is the size of the level hash and `level_idx` is the
-   index of the current level.
+   where `level_idx` is the index of the level for which the number of buckets
+   is being calculated.
+
 The `bucket` struct contains fields :
 - `slots` - An array of size `bucket_size` that contains the 1-based, 64-bit
    address of the value entry in the values file. Note that the offset is
    1-based because 0 is considered as an invalid value for the address (hence,
    if the value is 0, then that slot is considered as an empty slot). This
    helps in recognizing if an entry in the keymap points to a valid address
-   or not. We can't really fill up the keymap entries with a negative offset
-   as that would just take up unnecessary space.
+   or not. We use `fallocate(3)` with `FALLOC_FL_PUNCH_HOLE` to punch holes in
+   the files for regions which are unused. After this, reading that region of
+   the file returns `0`.
+
 
 ### Values
 
@@ -85,15 +88,15 @@ The `values` structure constains fields :
 - `magic_number` - A magic number that is used to identify the values file.
 - `values` - The value entries.
 
-- Each `value` entry contains fields :
+Each `value` entry contains fields :
 - `entry_size` - The size of the entry in bytes (excluding the size of this
-   `entry_size` field).
+   `entry_size` field i.e. 4).
 - `prev_entry` - The address of the previous entry in the values file.
 - `next_entry` - The address of the next entry in the values file.
 - `key_size` - The size of the key in bytes.
-- `key` - The key of `key_size` bytes.
+- `key` - The key of `key_size` 8-bit bytes.
 - `value_size` - The size of the value in bytes.
-- `value` - The value of `value_size` bytes.
+- `value` - The value of `value_size` 8-bit bytes.
 
 ### Metadata
 
@@ -118,7 +121,7 @@ The `meta` structure contains the fields :
 - `keymap_version` - The version of the keymap file.
 - `values_head_entry` - The address of the first entry in the values file.
 - `values_tail_entry` - The address of the last entry in the values file.
-- `values_file_size_bytes` - The (occupied) size of the values file in bytes.
+- `values_file_size_bytes` - The size of the values file in bytes.
 - `km_level_size` - The level size of the level hash.
 - `km_bucket_size` - The bucket size of the level hash.
 - `km_l0_addr` - Address of the level 0 (top level) in the keymap.
