@@ -21,6 +21,9 @@
 #![feature(assert_matches)]
 #![cfg_attr(target_arch = "arm", feature(stdarch_arm_neon_intrinsics))]
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+compile_err!("This library only works on Linux/Android!");
+
 // Include the generated Rust bindings for libcpu_features
 // Needed only on armv7a as Neon support is optional on such machines
 // aarch64 is guaranteed to have Neon support
@@ -53,20 +56,12 @@ pub(crate) mod io_arm;
 #[cfg(target_arch = "arm")]
 pub(crate) use io_arm::__memneq;
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(target_arch = "aarch64"))]
 pub(crate) mod io_aarch64;
-
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(target_arch = "aarch64"))]
 pub(crate) use io_aarch64::__memneq;
 
-#[cfg(all(
-    any(target_arch = "x86", target_arch = "x86_64"),
-    target_feature = "sse2"
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub(crate) mod io_x86;
-
-#[cfg(all(
-    any(target_arch = "x86", target_arch = "x86_64"),
-    target_feature = "sse2"
-))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub(crate) use io_x86::__memneq;
