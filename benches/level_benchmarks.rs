@@ -61,7 +61,7 @@ fn bench_level_insert(c: &mut Criterion) {
             for i in 0..100000 {
                 let key = black_box([i as u8]);
                 let value = black_box([i as u8]);
-                hash.insert(&key, &value);
+                let _ = hash.insert(&key, &value);
             }
         })
     });
@@ -78,7 +78,7 @@ fn bench_level_lookup(c: &mut Criterion) {
         for i in 0..100000 {
             let key = [i as u8];
             let value = [i as u8];
-            hash.insert(&key, &value);
+            let _ =  hash.insert(&key, &value);
         }
         b.iter(|| {
             for i in 0..100000 {
@@ -100,7 +100,7 @@ fn bench_level_delete(c: &mut Criterion) {
         for i in 0..100000 {
             let key = [i as u8];
             let value = [i as u8];
-            hash.insert(&key, &value);
+            let _ = hash.insert(&key, &value);
         }
         b.iter(|| {
             for i in 0..100000 {
@@ -123,35 +123,15 @@ fn bench_level_insert_auto_expand(c: &mut Criterion) {
             for i in 0..100000 {
                 let key = black_box([i as u8]);
                 let value = black_box([i as u8]);
-                hash.insert(&key, &value);
-            }
-        })
-    });
-}
-
-fn bench_level_mixed(c: &mut Criterion) {
-    c.bench_function("CRD", |b| {
-        let mut hash = create_level_hash("CRD", true, |ops| {
-            ops.level_size(10)
-                .bucket_size(4)
-                .auto_expand(true)
-                .unique_keys(false);
-        });
-        b.iter(|| {
-            for i in 0..100000 {
-                let key = black_box([i as u8]);
-                let value = black_box([i as u8]);
-                hash.insert(&key, &value);
-                hash.get_value(&key);
-                hash.remove(&key);
+                let _ = hash.insert(&key, &value);
             }
         })
     });
 }
 
 criterion_group!(
-    name = benches;
-    config = Criterion::default().sample_size(20).measurement_time(Duration::from_secs(40));
-    targets = bench_level_insert, bench_level_lookup, bench_level_delete, bench_level_insert_auto_expand, bench_level_mixed
+    name = crud_benches;
+    config = Criterion::default().sample_size(10).measurement_time(Duration::from_secs(30));
+    targets = bench_level_insert, bench_level_lookup, bench_level_delete, bench_level_insert_auto_expand
 );
-criterion_main!(benches);
+criterion_main!(crud_benches);
