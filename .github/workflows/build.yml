@@ -74,6 +74,8 @@ jobs:
   build_linux:
     name: Build for Linux
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
     steps:
     - name: Cancel previous runs
       uses: styfle/cancel-workflow-action@0.12.1
