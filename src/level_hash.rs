@@ -14,13 +14,9 @@
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
-use std::io::Write;
+
 use std::path::Path;
 use std::path::PathBuf;
-
-use highway::HighwayHash;
-use highway::HighwayHasher;
-use highway::Key;
 
 use crate::generate_seeds;
 use crate::level_hash::ResizeState::NotResizing;
@@ -71,6 +67,9 @@ pub enum ResizeState {
     Expanding,
 }
 
+/// A function which accepts a seed and data and computes the 64-bit hash of the data.
+pub type HashFn = fn(u64, &[u8]) -> u64;
+
 /// Level hash is a write-optimized and high-performance hashing index scheme with cost-efficient
 /// resizing and low-overhead consistency guarantee for persistent memory.
 ///
@@ -94,6 +93,8 @@ pub struct LevelHash {
     load_factor_threshold: f32,
     seed_1: u64,
     seed_2: u64,
+    hashfn_1: HashFn,
+    hashfn_2: HashFn,
     item_counts: [u32; 2],
     expand_count: u32,
     resize_state: ResizeState,
@@ -108,6 +109,8 @@ pub struct LevelHashOptions {
     auto_expand: bool,
     load_factor_threshold: f32,
     seeds: Option<(u64, u64)>,
+    hashfn_1: Option<HashFn>,
+    hashfn_2: Option<HashFn>,
     index_dir: Option<PathBuf>,
     index_name: Option<String>,
 }
@@ -122,6 +125,8 @@ impl LevelHashOptions {
             auto_expand: true,
             load_factor_threshold: LEVEL_AUTO_EXPAND_THRESHOLD_DEFAULT,
             seeds: None,
+            hashfn_1: None,
+            hashfn_2: None,
             index_dir: None,
             index_name: None,
         }
@@ -207,6 +212,18 @@ impl LevelHashOptions {
         self
     }
 
+    /// Set the two hash functions which will be used to compute the slot position for keys.
+    ///
+    /// ## Parameters
+    ///
+    /// * - `fn1` - The first hash function.
+    /// * - `fn2` - The second hash function.
+    pub fn hash_fns(&mut self, fn1: HashFn, fn2: HashFn) -> &mut Self {
+        self.hashfn_1 = Some(fn1);
+        self.hashfn_2 = Some(fn2);
+        self
+    }
+
     /// Build the level hash instance
     pub fn build(&mut self) -> LevelInitResult {
         let index_dir = self.index_dir.take().ok_or_else(|| {
@@ -217,6 +234,8 @@ impl LevelHashOptions {
         })?;
 
         let seeds = self.seeds.take().unwrap_or_else(|| generate_seeds());
+        let fn1 = self.hashfn_1.take().expect("HashFn 1 is not set");
+        let fn2 = self.hashfn_2.take().expect("HashFn 2 is not set");
         LevelHash::new(
             &index_dir,
             &index_name,
@@ -227,6 +246,8 @@ impl LevelHashOptions {
             self.load_factor_threshold,
             seeds.0,
             seeds.1,
+            fn1,
+            fn2,
         )
     }
 }
@@ -247,6 +268,8 @@ impl LevelHash {
         load_factor_threshold: f32,
         seed_1: u64,
         seed_2: u64,
+        hashfn_1: HashFn,
+        hashfn_2: HashFn,
     ) -> LevelInitResult {
         let io = LevelHashIO::new(index_dir, index_name, level_size, bucket_size)?;
         Ok(Self {
@@ -255,6 +278,8 @@ impl LevelHash {
             load_factor_threshold,
             seed_1,
             seed_2,
+            hashfn_1,
+            hashfn_2,
             item_counts: [0u32, 0],
             expand_count: 0,
             resize_state: NotResizing,
@@ -290,18 +315,12 @@ impl LevelHash {
 impl LevelHash {
     #[inline]
     fn fhash(&self, key: &LevelKeyT) -> u64 {
-        return Self::__hash(self.seed_1, key);
+        return (self.hashfn_1)(self.seed_1, key);
     }
 
     #[inline]
     fn shash(&self, key: &LevelKeyT) -> u64 {
-        return Self::__hash(self.seed_2, key);
-    }
-
-    fn __hash(seed: u64, data: &[u8]) -> u64 {
-        let mut hasher = HighwayHasher::new(Key([seed, seed - 16, seed - 32, seed - 64]));
-        hasher.write(data).unwrap();
-        return hasher.finalize64();
+        return (self.hashfn_2)(self.seed_2, key);
     }
 
     fn buck_idx_lvl(&mut self, key_hash: u64, level: Level) -> u32 {
@@ -794,6 +813,15 @@ mod test {
     use crate::LevelHash;
     use crate::LevelHashOptions;
 
+    use gxhash::GxHasher;
+    use std::hash::Hasher;
+
+    fn gxhash(seed: u64, data: &[u8]) -> u64 {
+        let mut hasher = GxHasher::with_seed(seed as i64);
+        hasher.write(data);
+        hasher.finish()
+    }
+
     fn create_level_hash(
         name: &str,
         create_new: bool,
@@ -809,7 +837,11 @@ mod test {
 
         let (s1, s2) = generate_seeds();
         let mut options = LevelHash::options();
-        options.index_dir(index_dir).index_name(name).seeds(s1, s2);
+        options
+            .index_dir(index_dir)
+            .index_name(name)
+            .seeds(s1, s2)
+            .hash_fns(self::gxhash, self::gxhash);
 
         conf(&mut options);
 

@@ -15,10 +15,10 @@ byteorder = "1.5.0"
 libc = "0.2.155"
 memmap2 = "0.9.4"
 rand = "0.8.5"
-highway = "1.2.0"
 
 [dev-dependencies]
 float-cmp = "0.9.0"
+gxhash = "3.4.1"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 
 [build-dependencies]
@@ -28,9 +28,12 @@ cmake = "0.1.50"
 [lib]
 crate-type = ["rlib", "dylib"]
 
-[[bench]]
+[profile.release]
+strip = true
+
+[[bench]]   
 name = "level_benchmarks"
 harness = false
 
-[profile.release]
-strip = true
+[[example]]
+name = "insert_1000000"

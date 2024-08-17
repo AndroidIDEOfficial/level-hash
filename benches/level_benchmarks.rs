@@ -14,7 +14,10 @@
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
+use gxhash::GxHasher;
+
 use std::fs;
+use std::hash::Hasher;
 use std::path::Path;
 use std::time::Duration;
 
@@ -25,6 +28,12 @@ use criterion::Criterion;
 
 use level_hash::util::generate_seeds;
 use level_hash::LevelHash;
+
+fn gxhash(seed: u64, data: &[u8]) -> u64 {
+    let mut hasher = GxHasher::with_seed(seed as i64);
+    hasher.write(data);
+    hasher.finish()
+}
 
 fn create_level_hash(
     name: &str,
@@ -42,7 +51,11 @@ fn create_level_hash(
     let (s1, s2) = generate_seeds();
 
     let mut options = LevelHash::options();
-    options.index_dir(index_dir).index_name(name).seeds(s1, s2);
+    options
+        .index_dir(index_dir)
+        .index_name(name)
+        .seeds(s1, s2)
+        .hash_fns(self::gxhash, self::gxhash);
 
     conf(&mut options);
 
@@ -78,7 +91,7 @@ fn bench_level_lookup(c: &mut Criterion) {
         for i in 0..100000 {
             let key = [i as u8];
             let value = [i as u8];
-            let _ =  hash.insert(&key, &value);
+            let _ = hash.insert(&key, &value);
         }
         b.iter(|| {
             for i in 0..100000 {
