@@ -139,7 +139,7 @@ impl ValuesEntry {
         let result: Vec<u8>;
         if size > 0 && read_key {
             let mut key = vec![0u8; size as usize];
-            file.read_exact(&mut key).unwrap();
+            file.read(&mut key).unwrap();
             result = key;
         } else {
             file.seek(Current(size as i64)).unwrap();
@@ -190,7 +190,7 @@ impl ValuesEntry {
         }
 
         let mut value = vec![0u8; size as usize];
-        file.read_exact(&mut value).unwrap();
+        file.read(&mut value).unwrap();
         (size, value)
     }
 
@@ -199,7 +199,7 @@ impl ValuesEntry {
         let size = self.value_size(file);
         if size > 0 {
             let mut value = vec![0u8; size as usize];
-            file.read_exact(value.as_mut_slice()).unwrap();
+            file.read(&mut value).unwrap();
             value
         } else {
             vec![]
@@ -741,7 +741,7 @@ impl LevelHashIO {
 
         if read_value && val_size > 0 {
             let mut value = vec![0u8; val_size as usize];
-            self.values.read_exact(value.as_mut_slice()).unwrap();
+            self.values.read(&mut value).unwrap();
             result = Some(value)
         }
 
