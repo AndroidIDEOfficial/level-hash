@@ -21,9 +21,12 @@ jobs:
           - armv7-linux-androideabi
           - i686-linux-android
           - x86_64-linux-android
-    env:
+        platform:
+          - 21
+          - 26
+    env:  
       NDK_VERSION: r27
-      ANDROID_PLATFORM: 21
+      ANDROID_PLATFORM: ${{ matrix.platform }}
     steps:
     - name: Cancel previous runs
       uses: styfle/cancel-workflow-action@0.12.1
