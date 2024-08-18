@@ -18,10 +18,20 @@
 use cmake;
 use std::{env, path::PathBuf};
 
+const ANDROID_PLATFORM_DEFAULT: &str = "android-26";
+
 fn main() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let triple = env::var("TARGET").unwrap();
+    let android_platform = env::var("ANDROID_PLATFORM")
+        .map(|v| {
+            let mut str = String::from("android-");
+            str.push_str(&v);
+            str
+        })
+        .unwrap_or(String::from(ANDROID_PLATFORM_DEFAULT));
+
     let cpufeat = PathBuf::from("cpu_features").canonicalize().unwrap();
     let cpufeat_src = cpufeat.join("src");
     let cpufeat_include = cpufeat.join("include");
@@ -64,7 +74,7 @@ fn main() {
                     _ => panic!("Unknown Android arch: {}", arch),
                 },
             )
-            .define("ANDROID_PLATFORM", "android-26");
+            .define("ANDROID_PLATFORM", android_platform);
     }
 
     println!("cargo::rustc-link-search={}/lib", config.build().display());
