@@ -70,7 +70,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.target }}
+        name: ${{ matrix.target }}-${{ matrix.platform }}
         path: |
           target/${{ matrix.target }}/debug/liblevel_hash.so
 
