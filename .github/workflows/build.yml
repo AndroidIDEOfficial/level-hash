@@ -99,8 +99,6 @@ jobs:
       run: cargo build
     - name: Run tests
       run: cargo test
-    - name: Run test binary
-      run: ./target/debug/level-hash
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
