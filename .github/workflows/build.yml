@@ -23,7 +23,7 @@ jobs:
           - x86_64-linux-android
     env:
       NDK_VERSION: r27
-      ANDROID_PLATFORM: 26
+      ANDROID_PLATFORM: 21
     steps:
     - name: Cancel previous runs
       uses: styfle/cancel-workflow-action@0.12.1
