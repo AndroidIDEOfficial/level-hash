@@ -41,8 +41,7 @@ pub(crate) struct MappedFile {
     pub(crate) map: MmapMut,
     pub(crate) fd: OwnedFd,
 
-    #[cfg(target_os = "linux")]
-    #[allow(dead_code)]
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(crate) off: OffT,
     pub(crate) size: OffT,
 }
