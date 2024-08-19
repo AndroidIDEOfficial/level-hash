@@ -41,7 +41,6 @@ fn main() {
     println!("cargo::rustc-link-lib=cpu_features");
     println!("cargo::rerun-if-changed={}", cpufeat_src.display());
     println!("cargo::rerun-if-changed={}", cpufeat_include.display());
-    println!("cargo::rerun-if-changed=build.rs");
 
     let mut header = format!("cpuinfo_{}.h", arch);
     if arch == "x86_64" {

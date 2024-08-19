@@ -38,9 +38,11 @@ pub(crate) mod io;
 pub(crate) mod level_io;
 pub(crate) mod log;
 pub(crate) mod meta;
-pub mod result;
+pub(crate) mod reprs;
 pub(crate) mod size;
 pub(crate) mod types;
+
+pub mod result;
 pub mod util;
 
 mod level_hash;

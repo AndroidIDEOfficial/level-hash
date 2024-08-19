@@ -16,8 +16,6 @@
  */
 use std::cmp::min;
 use std::fs::File;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::path::Path;
 
 use crate::fs::init_sparse_file;
@@ -26,19 +24,18 @@ use crate::level_io::LevelHashIO;
 use crate::level_io::LEVEL_KEYMAP_VERSION;
 use crate::level_io::LEVEL_VALUES_VERSION;
 use crate::level_io::VALUES_SEGMENT_SIZE_DEFAULT;
+use crate::reprs::LevelMeta;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
 use crate::result::LevelInitError;
 use crate::result::LevelResult;
-use crate::size::SIZE_U32;
-use crate::size::SIZE_U64;
-use crate::size::SIZE_U8;
 use crate::types::BucketSizeT;
 use crate::types::LevelSizeT;
 use crate::types::OffT;
 
-pub struct MetaIO {
-    pub(crate) file: MappedFile,
+pub(crate) struct MetaIO {
+    pub _file: MappedFile,
+    pub meta: *mut LevelMeta,
 }
 
 impl MetaIO {
@@ -65,14 +62,10 @@ impl MetaIO {
             ))
             .into_lvl_init_err()?;
 
-        let mmap = MappedFile::new(
-            file.into(),
-            Self::VAL__VERSION__OFFSET,
-            Self::META__SIZE_BYTES,
-        )
-        .into_lvl_init_err()?;
-        let mut meta = MetaIO { file: mmap };
-
+        let mut mmap =
+            MappedFile::new(file.into(), 0, Self::META__SIZE_BYTES).into_lvl_init_err()?;
+        let meta = mmap.map.as_mut_ptr() as *mut LevelMeta;
+        let mut meta = MetaIO { _file: mmap, meta };
         if meta.val_version() == 0 {
             meta.set_val_version(LEVEL_VALUES_VERSION);
         }
@@ -106,115 +99,8 @@ impl MetaIO {
 }
 
 impl MetaIO {
-    #[inline]
-    fn seek(&mut self, offset: OffT) {
-        self.file.seek(SeekFrom::Start(offset as u64)).unwrap();
-    }
+    pub const META__SIZE_BYTES: OffT = size_of::<LevelMeta>() as OffT;
 
-    fn write(&mut self, offset: OffT, value: u8) {
-        self.seek(offset);
-        return self.file.w_u8(value);
-    }
-
-    fn read(&mut self, offset: OffT) -> u8 {
-        self.seek(offset);
-        return self.file.r_u8();
-    }
-
-    fn write_u32(&mut self, offset: OffT, value: u32) {
-        self.seek(offset);
-        return self.file.w_u32(value);
-    }
-
-    fn read_u32(&mut self, offset: OffT) -> u32 {
-        self.seek(offset);
-        return self.file.r_u32();
-    }
-
-    fn write_u64(&mut self, offset: OffT, value: u64) {
-        self.seek(offset);
-        return self.file.w_u64(value);
-    }
-
-    fn read_u64(&mut self, offset: OffT) -> u64 {
-        self.seek(offset);
-        return self.file.r_u64();
-    }
-
-    pub fn val_version(&mut self) -> u32 {
-        return self.read_u32(Self::VAL__VERSION__OFFSET);
-    }
-
-    pub fn set_val_version(&mut self, value: u32) {
-        self.write_u32(Self::VAL__VERSION__OFFSET, value);
-    }
-
-    pub fn km_version(&mut self) -> u32 {
-        return self.read_u32(Self::KM__VERSION__OFFSET);
-    }
-
-    pub fn set_km_version(&mut self, value: u32) {
-        self.write_u32(Self::KM__VERSION__OFFSET, value);
-    }
-
-    pub fn val_head_addr(&mut self) -> OffT {
-        return self.read_u64(Self::VAL__HEAD_ADDR__OFFSET);
-    }
-
-    pub fn set_val_head_addr(&mut self, value: OffT) {
-        self.write_u64(Self::VAL__HEAD_ADDR__OFFSET, value);
-    }
-
-    pub fn val_tail_addr(&mut self) -> OffT {
-        return self.read_u64(Self::VAL__TAIL_ADDR__OFFSET);
-    }
-
-    pub fn set_val_tail_addr(&mut self, value: OffT) {
-        self.write_u64(Self::VAL__TAIL_ADDR__OFFSET, value);
-    }
-
-    pub fn val_file_size(&mut self) -> OffT {
-        return self.read_u64(Self::VAL__VAL_SIZE__OFFSET);
-    }
-
-    pub fn set_val_file_size(&mut self, value: OffT) {
-        self.write_u64(Self::VAL__VAL_SIZE__OFFSET, value);
-    }
-
-    pub fn km_level_size(&mut self) -> LevelSizeT {
-        return self.read(Self::KM__LEVEL_SIZE__OFFSET);
-    }
-
-    pub fn set_km_level_size(&mut self, value: LevelSizeT) {
-        self.write(Self::KM__LEVEL_SIZE__OFFSET, value);
-    }
-
-    pub fn km_bucket_size(&mut self) -> BucketSizeT {
-        return self.read(Self::KM__BUCKET_SIZE__OFFSET);
-    }
-
-    pub fn set_km_bucket_size(&mut self, value: BucketSizeT) {
-        self.write(Self::KM__BUCKET_SIZE__OFFSET, value);
-    }
-
-    pub fn km_l0_addr(&mut self) -> OffT {
-        return self.read_u64(Self::KM__L0_ADDR__OFFSET);
-    }
-
-    pub fn set_km_l0_addr(&mut self, value: OffT) {
-        self.write_u64(Self::KM__L0_ADDR__OFFSET, value);
-    }
-
-    pub fn km_l1_addr(&mut self) -> OffT {
-        return self.read_u64(Self::KM__L1_ADDR__OFFSET);
-    }
-
-    pub fn set_km_l1_addr(&mut self, value: OffT) {
-        self.write_u64(Self::KM__L1_ADDR__OFFSET, value);
-    }
-}
-
-impl MetaIO {
     pub fn km_start_addr(&mut self) -> OffT {
         min(self.km_l0_addr(), self.km_l1_addr())
     }
@@ -228,50 +114,6 @@ impl MetaIO {
         size += l0_bytes >> 1;
         return size;
     }
-}
-
-impl MetaIO {
-    pub const VAL__VERSION__OFFSET: OffT = 0;
-    pub const VAL__VERSION__SIZE_BYTES: OffT = SIZE_U32;
-
-    pub const KM__VERSION__OFFSET: OffT =
-        Self::VAL__VERSION__OFFSET + Self::VAL__VERSION__SIZE_BYTES;
-    pub const KM__VERSION__SIZE_BYTES: OffT = SIZE_U32;
-
-    pub const VAL__HEAD_ADDR__OFFSET: OffT =
-        Self::KM__VERSION__OFFSET + Self::KM__VERSION__SIZE_BYTES;
-    pub const VAL__HEAD_ADDR__SIZE_BYTES: OffT = SIZE_U64;
-
-    pub const VAL__TAIL_ADDR__OFFSET: OffT =
-        Self::VAL__HEAD_ADDR__OFFSET + Self::VAL__HEAD_ADDR__SIZE_BYTES;
-    pub const VAL__TAIL_ADDR__SIZE_BYTES: OffT = SIZE_U64;
-
-    pub const VAL__VAL_SIZE__OFFSET: OffT =
-        Self::VAL__TAIL_ADDR__OFFSET + Self::VAL__TAIL_ADDR__SIZE_BYTES;
-    pub const VAL__VAL_SIZE__SIZE_BYTES: OffT = SIZE_U64;
-
-    pub const KM__LEVEL_SIZE__OFFSET: OffT =
-        Self::VAL__VAL_SIZE__OFFSET + Self::VAL__VAL_SIZE__SIZE_BYTES;
-    pub const KM__LEVEL_SIZE__SIZE_BYTES: OffT = SIZE_U8;
-
-    pub const KM__BUCKET_SIZE__OFFSET: OffT =
-        Self::KM__LEVEL_SIZE__OFFSET + Self::KM__LEVEL_SIZE__SIZE_BYTES;
-    pub const KM__BUCKET_SIZE__SIZE_BYTES: OffT = SIZE_U8;
-
-    pub const KM__L0_ADDR__OFFSET: OffT =
-        Self::KM__BUCKET_SIZE__OFFSET + Self::KM__BUCKET_SIZE__SIZE_BYTES;
-    pub const KM__L0_ADDR__SIZE_BYTES: OffT = SIZE_U64;
-
-    pub const KM__L1_ADDR__OFFSET: OffT = Self::KM__L0_ADDR__OFFSET + Self::KM__L0_ADDR__SIZE_BYTES;
-    pub const KM__L1_ADDR__SIZE_BYTES: OffT = SIZE_U64;
-
-    // TODO: The below property below must be updated when a new field is added to the meta file
-
-    /**
-     * The size of the meta file in bytes.
-     */
-    // Offset of the last field + its size
-    const META__SIZE_BYTES: OffT = Self::KM__L1_ADDR__OFFSET + Self::KM__L1_ADDR__SIZE_BYTES;
 }
 
 #[cfg(test)]
@@ -296,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_meta_init_with_default_values() {
-        let mut io = create_meta_io("init-with-default", true);
+        let io = create_meta_io("init-with-default", true);
         assert_eq!(io.val_version(), LEVEL_VALUES_VERSION);
         assert_eq!(io.km_version(), LEVEL_KEYMAP_VERSION);
         assert_eq!(io.val_head_addr(), 0);
@@ -327,7 +169,7 @@ mod tests {
         }
 
         {
-            let mut io = create_meta_io("init-with-existing", false);
+            let io = create_meta_io("init-with-existing", false);
             assert_eq!(io.val_version(), 2);
             assert_eq!(io.km_version(), 3);
             assert_eq!(io.val_head_addr(), 200);

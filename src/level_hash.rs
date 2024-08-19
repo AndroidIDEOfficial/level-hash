@@ -357,7 +357,7 @@ impl LevelHash {
         key: &LevelKeyT,
     ) -> Option<ValuesEntry> {
         return self.entry_at(level, bucket, slot).take_if(|e| {
-            (!e.is_empty(&mut self.io.values))
+            (!e.is_empty())
                 .then(|| e.keyeq(&mut self.io.values, key))
                 .is_true()
         });
@@ -418,9 +418,9 @@ impl LevelHash {
         }
 
         let val_addr = val_addr.unwrap();
-        let entry = ValuesEntry::at(val_addr - 1);
+        let entry = ValuesEntry::at(val_addr - 1, &mut self.io.values);
 
-        if entry.is_empty(&mut self.io.values) {
+        if entry.is_empty() {
             // slot is occupied, but the entry is empty
             return self.io.append_entry_at_slot(slot_addr, key, value);
         }
@@ -797,22 +797,22 @@ impl LevelHash {
 mod test {
     use std::assert_matches::assert_matches;
     use std::fs;
-    use std::io::Read;
     use std::path::Path;
-
-    use byteorder::ReadBytesExt;
 
     use crate::io::IOEndianness;
     use crate::level_io::LevelHashIO;
+    use crate::level_io::ValuesEntry;
     use crate::meta::MetaIO;
+    use crate::reprs::ValuesData;
     use crate::result::LevelInsertionError;
     use crate::result::LevelUpdateError;
-    use crate::size::SIZE_U32;
     use crate::size::SIZE_U64;
+    use crate::util::align_8;
     use crate::util::generate_seeds;
     use crate::LevelHash;
     use crate::LevelHashOptions;
 
+    use byteorder::ByteOrder;
     use gxhash::GxHasher;
     use std::hash::Hasher;
 
@@ -1057,7 +1057,8 @@ mod test {
             options.auto_expand(false);
         });
 
-        let entry_size = 34;
+        // min_size + "key1".len() + "value1".len()
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
 
         for i in 0..10 {
             let key = format!("key{}", i).as_bytes().to_vec();
@@ -1069,45 +1070,41 @@ mod test {
             "target/tests/level-hash/index-{}/{}.index",
             file_name, file_name
         );
-        let input = fs::read(&index_file).expect("Unable to read index file");
-        let mut input = input.as_slice();
+        let mut input = fs::read(&index_file).expect("Unable to read index file");
+        let input = input.as_mut_slice();
 
-        let mut pos = 0u64;
         assert_eq!(
-            input.read_u64::<IOEndianness>().unwrap(),
+            IOEndianness::read_u64(input),
             LevelHashIO::VALUES_MAGIC_NUMBER
         );
-        pos += SIZE_U64;
+
+        let mut pos = SIZE_U64; // magic number
+        let input = &mut input[pos as usize..];
 
         let mut prev_entry = 0;
         for i in 0..10 {
-            let p = pos - 8;
-            assert_eq!(input.read_u32::<IOEndianness>().unwrap(), entry_size);
-            pos += SIZE_U32;
-            assert_eq!(input.read_u64::<IOEndianness>().unwrap(), prev_entry);
-            pos += SIZE_U64;
+            let p = pos - SIZE_U64; // magic number len
+            let data = unsafe { &*(input[p as usize..].as_ptr() as *const ValuesData) };
+
+            assert_eq!(data.entry_size, entry_size);
+            assert_eq!(data.prev_entry, prev_entry);
+            assert_eq!(data.next_entry, align_8(p + entry_size) + 1);
+            assert_eq!(data.key_size, 4);
+            assert_eq!(data.value_size, 6);
             assert_eq!(
-                input.read_u64::<IOEndianness>().unwrap(),
-                p + entry_size as u64 + 4 + 1
+                &input[(p + ValuesEntry::OFF_KEY) as usize
+                    ..(p + ValuesEntry::OFF_KEY + data.key_size as u64) as usize],
+                format!("key{}", i).as_bytes()
             );
-            pos += SIZE_U64;
-            assert_eq!(input.read_u32::<IOEndianness>().unwrap(), 4);
-            pos += SIZE_U32;
-
-            let mut buf = [0u8; 4];
-            input.read_exact(&mut buf).unwrap();
-            assert_eq!(&buf, &format!("key{}", i).as_bytes());
-            pos += 4;
-
-            assert_eq!(input.read_u32::<IOEndianness>().unwrap(), 6);
-            pos += SIZE_U32;
-
-            let mut buf = [0u8; 6];
-            input.read_exact(&mut buf).unwrap();
-            assert_eq!(&buf, &format!("value{}", i).as_bytes());
-            pos += 6;
+            assert_eq!(
+                &input[(p + ValuesEntry::OFF_KEY + data.key_size as u64) as usize
+                    ..(p + ValuesEntry::OFF_KEY + data.key_size as u64 + data.value_size as u64)
+                        as usize],
+                format!("value{}", i).as_bytes()
+            );
 
             prev_entry = p + 1;
+            pos = align_8(p + entry_size) + SIZE_U64; // + magic number len
         }
     }
 
@@ -1118,7 +1115,8 @@ mod test {
             options.auto_expand(false);
         });
 
-        let entry_size = 34u32;
+        // min_size + "key1".len() + "value1".len()
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
         let count = 10;
 
         for i in 0..count {
@@ -1137,8 +1135,8 @@ mod test {
         );
 
         let val_bytes = fs::read(&index_file).expect("Unable to read index file");
-        let mut input = val_bytes.as_slice();
-        let mut meta_io = MetaIO::new(
+        let input = val_bytes.as_slice();
+        let meta_io = MetaIO::new(
             Path::new(&meta_file),
             hash.io.meta.km_level_size(),
             hash.io.meta.km_bucket_size(),
@@ -1148,19 +1146,21 @@ mod test {
         assert_eq!(meta_io.val_head_addr(), 1);
         assert_eq!(
             meta_io.val_tail_addr(),
-            ((entry_size as u64 + 4) * (count - 1)) + 1
+            (align_8(entry_size) * (count - 1)) + 1
         );
 
         assert_eq!(
-            input.read_u64::<IOEndianness>().unwrap(),
+            IOEndianness::read_u64(input),
             LevelHashIO::VALUES_MAGIC_NUMBER
         );
-        assert_eq!(input.read_u32::<IOEndianness>().unwrap(), entry_size);
-        assert_eq!(input.read_u64::<IOEndianness>().unwrap(), 0);
-        assert_eq!(
-            input.read_u64::<IOEndianness>().unwrap(),
-            entry_size as u64 + 4 + 1
-        );
+
+        let pos = SIZE_U64; // magic number
+        let input = &input[pos as usize..];
+
+        let data = unsafe { &*(input.as_ptr() as *mut ValuesData) };
+        assert_eq!(data.entry_size, entry_size);
+        assert_eq!(data.prev_entry, 0);
+        assert_eq!(data.next_entry, align_8(entry_size) + 1);
     }
 
     #[test]
@@ -1170,7 +1170,8 @@ mod test {
             options.auto_expand(false);
         });
 
-        let entry_size = 34u32;
+        // min_size + "key1".len() + "value1".len()
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
         let count = 10;
 
         for i in 0..count {
@@ -1190,8 +1191,8 @@ mod test {
 
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(
+            let input = val_bytes.as_slice();
+            let meta_io = MetaIO::new(
                 Path::new(&meta_file),
                 hash.io.meta.km_level_size(),
                 hash.io.meta.km_bucket_size(),
@@ -1201,33 +1202,30 @@ mod test {
             assert_eq!(meta_io.val_head_addr(), 1);
             assert_eq!(
                 meta_io.val_tail_addr(),
-                ((entry_size + 4) * (count - 1) + 1) as u64
+                (align_8(entry_size) * (count - 1)) + 1
             );
 
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
+                IOEndianness::read_u64(input),
                 LevelHashIO::VALUES_MAGIC_NUMBER
             );
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 1)) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), entry_size);
-            assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (count as u64 - 2)) + 1
-            );
-            assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * count as u64) + 1
-            );
+            let pos = SIZE_U64; // magic number
+            let input = &input[pos as usize..];
+
+            let pos = (align_8(entry_size) * (count - 1)) as usize;
+            let data = unsafe { &*(input[pos as usize..].as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, entry_size);
+            assert_eq!(data.prev_entry, (align_8(entry_size) * (count - 2)) + 1);
+            assert_eq!(data.next_entry, (align_8(entry_size) * count) + 1);
         }
 
         hash.remove(&format!("key{}", count - 1).as_bytes());
 
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(
+            let input = val_bytes.as_slice();
+            let meta_io = MetaIO::new(
                 Path::new(&meta_file),
                 hash.io.meta.km_level_size(),
                 hash.io.meta.km_bucket_size(),
@@ -1237,29 +1235,25 @@ mod test {
             assert_eq!(meta_io.val_head_addr(), 1);
             assert_eq!(
                 meta_io.val_tail_addr(),
-                ((entry_size + 4) * (count - 2)) as u64 + 1
+                (align_8(entry_size) * (count - 2)) + 1
             );
 
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
+                IOEndianness::read_u64(input),
                 LevelHashIO::VALUES_MAGIC_NUMBER
             );
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 1)) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), 0);
+            let pos = SIZE_U64 as usize + (align_8(entry_size) * (count - 1)) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, 0);
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * (count - 2)) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), entry_size);
-            assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (count as u64 - 3)) + 1
-            );
-            assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (count as u64 - 1)) + 1
-            );
+            let pos = SIZE_U64 as usize + (align_8(entry_size) * (count - 2)) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, entry_size);
+            assert_eq!(data.prev_entry, (align_8(entry_size) * (count - 3)) + 1);
+            assert_eq!(data.next_entry, (align_8(entry_size) * (count - 1)) + 1);
         }
     }
 
@@ -1270,7 +1264,9 @@ mod test {
             options.auto_expand(false);
         });
 
-        let entry_size = 34u32;
+        // min_size + "key1".len() + "value1".len()
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
+        let entry_size_aligned = align_8(entry_size);
         let count = 10;
 
         for i in 0..count {
@@ -1293,8 +1289,8 @@ mod test {
 
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(
+            let input = val_bytes.as_slice();
+            let meta_io = MetaIO::new(
                 Path::new(&meta_file),
                 hash.io.meta.km_level_size(),
                 hash.io.meta.km_bucket_size(),
@@ -1304,38 +1300,41 @@ mod test {
             assert_eq!(meta_io.val_head_addr(), 1);
             assert_eq!(
                 meta_io.val_tail_addr(),
-                ((entry_size + 4) * (count - 1) + 1) as u64
+                (entry_size_aligned * (count - 1)) + 1
             );
 
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
+                IOEndianness::read_u64(input),
                 LevelHashIO::VALUES_MAGIC_NUMBER
             );
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * to_remove_idx) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), entry_size);
+            let pos = SIZE_U64 as usize + (entry_size_aligned * to_remove_idx) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, entry_size);
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1
+                data.prev_entry,
+                (entry_size_aligned * (to_remove_idx - 1)) + 1
             );
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx as u64 + 1)) + 1
+                data.next_entry,
+                (entry_size_aligned * (to_remove_idx + 1)) + 1
             );
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), 4);
+            assert_eq!(data.key_size, 4);
 
-            let mut buf = [0u8; 4];
-            val_input.read_exact(&mut buf).unwrap();
-            assert_eq!(buf, format!("key{}", to_remove_idx).as_bytes());
+            assert_eq!(
+                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
+                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
+                format!("key{}", to_remove_idx).as_bytes()
+            );
         }
 
         hash.remove(&format!("key{}", to_remove_idx).as_bytes());
 
         {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let mut val_input = val_bytes.as_slice();
-            let mut meta_io = MetaIO::new(
+            let input = val_bytes.as_slice();
+            let meta_io = MetaIO::new(
                 Path::new(&meta_file),
                 hash.io.meta.km_level_size(),
                 hash.io.meta.km_bucket_size(),
@@ -1345,51 +1344,58 @@ mod test {
             assert_eq!(meta_io.val_head_addr(), 1);
             assert_eq!(
                 meta_io.val_tail_addr(),
-                ((entry_size + 4) * (count - 1)) as u64 + 1
+                (entry_size_aligned * (count - 1)) as u64 + 1
             );
 
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
+                IOEndianness::read_u64(input),
                 LevelHashIO::VALUES_MAGIC_NUMBER
             );
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * to_remove_idx) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), 0);
+            let pos = SIZE_U64 as usize + (entry_size_aligned * to_remove_idx) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, 0);
 
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * (to_remove_idx - 1)) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), entry_size);
+            let pos = SIZE_U64 as usize + (entry_size_aligned * (to_remove_idx - 1)) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, entry_size);
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 2)) + 1
+                data.prev_entry,
+                (entry_size_aligned * (to_remove_idx - 2)) + 1
             );
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx + 1) as u64) + 1
+                data.next_entry,
+                (entry_size_aligned * (to_remove_idx + 1)) + 1
             );
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), 4);
+            assert_eq!(data.key_size, 4);
 
-            let mut buf = [0u8; 4];
-            val_input.read_exact(&mut buf).unwrap();
-            assert_eq!(buf, format!("key{}", to_remove_idx - 1).as_bytes());
-
-            let pos = SIZE_U64 as usize + ((entry_size + 4) * (to_remove_idx + 1)) as usize;
-            let mut val_input = &val_bytes[pos..];
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), entry_size);
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx as u64 - 1)) + 1
+                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
+                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
+                format!("key{}", to_remove_idx - 1).as_bytes()
+            );
+
+            let pos = SIZE_U64 as usize + (entry_size_aligned * (to_remove_idx + 1)) as usize;
+            let input = &val_bytes[pos..];
+            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
+            assert_eq!(data.entry_size, entry_size);
+            assert_eq!(
+                data.prev_entry,
+                (entry_size_aligned * (to_remove_idx - 1)) + 1
             );
             assert_eq!(
-                val_input.read_u64::<IOEndianness>().unwrap(),
-                ((entry_size as u64 + 4) * (to_remove_idx as u64 + 2)) + 1
+                data.next_entry,
+                (entry_size_aligned * (to_remove_idx + 2)) + 1
             );
-            assert_eq!(val_input.read_u32::<IOEndianness>().unwrap(), 4);
+            assert_eq!(data.key_size, 4);
 
-            let mut buf = [0u8; 4];
-            val_input.read_exact(&mut buf).unwrap();
-            assert_eq!(buf, format!("key{}", to_remove_idx + 1).as_bytes());
+            assert_eq!(
+                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
+                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
+                format!("key{}", to_remove_idx + 1).as_bytes()
+            );
         }
     }
 }

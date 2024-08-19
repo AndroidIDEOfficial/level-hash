@@ -15,10 +15,6 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 use std::fs::create_dir_all;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom::*;
-use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 
@@ -27,10 +23,10 @@ use crate::fs::ftruncate_safe_path;
 use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
 use crate::meta::MetaIO;
+use crate::reprs::ValuesData;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
 use crate::result::IntoLevelInsertionErr;
-use crate::result::IntoLevelUpdateErr;
 use crate::result::LevelClearResult;
 use crate::result::LevelInitError;
 use crate::result::LevelInsertionError;
@@ -39,7 +35,6 @@ use crate::result::LevelRemapResult;
 use crate::result::LevelResult;
 use crate::result::LevelUpdateError;
 use crate::result::LevelUpdateResult;
-use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::types::BucketSizeT;
 use crate::types::LevelKeyT;
@@ -49,6 +44,7 @@ use crate::types::OffT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
+use crate::util::align_8;
 
 pub const LEVEL_VALUES_VERSION: u32 = 1;
 pub const LEVEL_KEYMAP_VERSION: u32 = 1;
@@ -71,139 +67,108 @@ pub struct LevelHashIO {
 }
 
 /// An entry in the values file.
+///
+/// # Properties
+///
+/// * - `addr` - The address of the entry in the values file.
+/// * - `data` - A pointer to the data representation in memory.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct ValuesEntry {
-    pub(crate) addr: OffT,
+pub(crate) struct ValuesEntry {
+    pub addr: OffT,
+    pub data: *mut ValuesData,
 }
 
 impl ValuesEntry {
-    const OFF_ENTRY_SIZE: OffT = 0;
-    const OFF_PREV_ENTRY: OffT = Self::OFF_ENTRY_SIZE + SIZE_U32;
-    const OFF_NEXT_ENTRY: OffT = Self::OFF_PREV_ENTRY + SIZE_U64;
-    const OFF_KEY_SIZE: OffT = Self::OFF_NEXT_ENTRY + SIZE_U64;
-    const OFF_KEY: OffT = Self::OFF_KEY_SIZE + SIZE_U32;
+    pub const OFF_ENTRY_SIZE: OffT = 0;
+    pub const OFF_PREV_ENTRY: OffT = Self::OFF_ENTRY_SIZE + ValuesData::SIZE_entry_size as OffT;
+    pub const OFF_NEXT_ENTRY: OffT = Self::OFF_PREV_ENTRY + ValuesData::SIZE_prev_entry as OffT;
+    pub const OFF_KEY_SIZE: OffT = Self::OFF_NEXT_ENTRY + ValuesData::SIZE_next_entry as OffT;
+    pub const OFF_VAL_SIZE: OffT = Self::OFF_KEY_SIZE + ValuesData::SIZE_key_size as OffT;
+    pub const OFF_KEY: OffT = Self::OFF_VAL_SIZE + ValuesData::SIZE_value_size as OffT;
 
-    const BYTES_U32_0: [u8; 4] = [0u8; 4];
+    pub const ENTRY_SIZE_MIN: OffT = Self::OFF_KEY - Self::OFF_ENTRY_SIZE;
 
     /// Create [ValuesEntry] representing the entry at `addr` in the values file.
-    pub fn at(addr: OffT) -> Self {
-        ValuesEntry { addr }
+    pub fn at(addr: OffT, file: &mut MappedFile) -> Self {
+        let data = unsafe { file.map.as_mut_ptr().add(addr as usize) as *mut ValuesData };
+        ValuesEntry { addr, data }
     }
 }
 
 impl ValuesEntry {
-    /// Seek to the given offset from the start of this entry.
+    pub fn data(&self) -> &ValuesData {
+        unsafe { &(*self.data) }
+    }
+
+    pub fn data_mut(&self) -> &mut ValuesData {
+        unsafe { &mut (*self.data) }
+    }
+
+    pub fn esize(&self) -> u64 {
+        self.data().entry_size
+    }
+
     #[inline]
-    pub fn goto(&self, file: &mut MappedFile, off: OffT) {
-        if file.pos == self.addr + off {
-            return;
-        }
-        file.seek(Start(self.addr + off)).unwrap();
+    pub fn esizeeq(&self, size: u64) -> bool {
+        self.esize() == size
     }
 
-    /// Compare the `entry_size` field of this entry with the given size.
-    pub fn esizeeq(&self, file: &mut MappedFile, size: u32) -> bool {
-        let mut bytes = Self::BYTES_U32_0;
-        if size > 0 {
-            bytes = size.to_le_bytes();
-        }
-        file.memeq(self.addr + Self::OFF_ENTRY_SIZE, &bytes)
-    }
-
-    /// Check whether this values entry has `entry_size` 0.
     #[inline]
-    pub fn is_empty(&self, file: &mut MappedFile) -> bool {
-        return self.esizeeq(file, 0);
+    pub fn is_empty(&self) -> bool {
+        return self.esizeeq(0);
     }
 
-    /// Get the `prev_entry` field of this entry.
-    pub fn prev_entry(&self, file: &mut MappedFile) -> OffT {
-        self.goto(file, Self::OFF_PREV_ENTRY);
-        file.r_u64()
+    pub fn prev_entry(&self) -> OffT {
+        self.data().prev_entry
     }
 
-    /// Get the `next_entry` field of this entry.
-    pub fn next_entry(&self, file: &mut MappedFile) -> OffT {
-        self.goto(file, Self::OFF_NEXT_ENTRY);
-        file.r_u64()
+    pub fn next_entry(&self) -> OffT {
+        self.data().next_entry
     }
 
-    /// Seek over the key region of this entry, optionally reading the key bytes.
-    ///
-    /// ## Returns
-    ///
-    /// The key bytes if `read_key` is true and the size of key is > 0, `None` otherwise.
-    pub(super) fn seek_over_key(&self, file: &mut MappedFile, read_key: bool) -> (u32, Vec<u8>) {
-        let size = self.key_size(file);
-        let result: Vec<u8>;
-        if size > 0 && read_key {
-            let mut key = vec![0u8; size as usize];
-            file.read(&mut key).unwrap();
-            result = key;
-        } else {
-            file.seek(Current(size as i64)).unwrap();
-            result = vec![];
-        }
-
-        return (size, result);
+    pub fn key_size(&self) -> u32 {
+        self.data().key_size
     }
 
-    /// Get the `key_size` field of this entry.
-    pub fn key_size(&self, file: &mut MappedFile) -> u32 {
-        self.goto(file, Self::OFF_KEY_SIZE);
-        file.r_u32()
+    pub fn ksizeeq(&self, size: u32) -> bool {
+        self.data().key_size == size
     }
 
-    /// Compare the `key_size` field of this entry with the given value.
-    pub fn ksizecmp(&self, file: &mut MappedFile, size: u32) -> bool {
-        let mut bytes = Self::BYTES_U32_0;
-        if size > 0 {
-            bytes = size.to_le_bytes();
-        }
-        return file.memeq(self.addr + Self::OFF_KEY_SIZE, &bytes);
+    pub fn value_size(&self) -> u32 {
+        self.data().value_size
     }
 
-    /// Get the key bytes of this entry.
     pub fn key(&self, file: &mut MappedFile) -> Vec<u8> {
-        return self.seek_over_key(file, true).1;
+        let size = self.key_size() as usize;
+        if size == 0 {
+            return vec![];
+        }
+
+        let mut key = vec![0u8; size];
+        file.read_at(self.addr + Self::OFF_KEY, key.as_mut_slice());
+        key
     }
 
     /// Compare the key region in the memory mapped file with the given key.
     pub fn keyeq(&self, file: &mut MappedFile, other: &LevelKeyT) -> bool {
-        return self.ksizecmp(file, other.len() as u32)
-            && file.memeq(self.addr + Self::OFF_KEY, other);
+        return self.ksizeeq(other.len() as u32) && file.memeq(self.addr + Self::OFF_KEY, other);
     }
 
-    /// Get the value size of this entry.
-    pub fn value_size(&self, file: &mut MappedFile) -> u32 {
-        self.seek_over_key(file, false);
-        file.r_u32()
-    }
-
-    /// Get the value bytes of this entry, and the size of the value.
     pub fn val_with_size(&self, file: &mut MappedFile) -> (u32, Vec<u8>) {
-        self.seek_over_key(file, false);
-        let size = file.r_u32();
+        let size = self.value_size();
         if size == 0 {
             return (size, vec![]);
         }
 
-        let mut value = vec![0u8; size as usize];
-        file.read(&mut value).unwrap();
-        (size, value)
+        let size = size as usize;
+        let key_size = self.key_size() as OffT;
+        let mut value = vec![0u8; size];
+        file.read_at(self.addr + Self::OFF_KEY + key_size, value.as_mut_slice());
+        (size as u32, value)
     }
 
-    /// Get the value bytes of this entry, only if the value size is > 0.
     pub fn value(&self, file: &mut MappedFile) -> Vec<u8> {
-        let size = self.value_size(file);
-        if size > 0 {
-            let mut value = vec![0u8; size as usize];
-            file.read(&mut value).unwrap();
-            value
-        } else {
-            vec![]
-        }
+        self.val_with_size(file).1
     }
 }
 
@@ -371,27 +336,20 @@ impl LevelHashIO {
             (Self::KEYMAP_ENTRY_SIZE_BYTES * slot as OffT)
     }
 
-    /// Seek to the slot entry offset in the keymap file for the given level, bucket and slot.
-    fn move_to_slot(&mut self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> bool {
-        let slot = self.slot_addr(level, bucket, slot);
-        self.keymap.seek(Start(slot)).is_ok()
-    }
-
     pub(crate) fn slot_and_val_addr_at(
         &mut self,
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
     ) -> (OffT, Option<OffT>) {
-        let slot = self.slot_addr(level, bucket, slot);
-        let val = self
-            .keymap
-            .seek(Start(slot))
-            .ok()
-            .map(|_| self.keymap.r_u64())
-            .take_if(|addr| *addr > Self::POS_INVALID);
+        let slot_addr = self.slot_addr(level, bucket, slot);
+        let addr = self.keymap.r_u64(slot_addr);
 
-        (slot, val)
+        if addr <= Self::POS_INVALID {
+            return (slot_addr, None);
+        }
+
+        (slot_addr, Some(addr))
     }
 
     /// Get the address of the value entry in the values file for the given level, bucket and slot.
@@ -401,9 +359,7 @@ impl LevelHashIO {
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
     ) -> Option<OffT> {
-        self.move_to_slot(level, bucket, slot)
-            .then(|| self.keymap.r_u64())
-            .take_if(|addr| *addr > Self::POS_INVALID)
+        self.slot_and_val_addr_at(level, bucket, slot).1
     }
 
     /// Get the [ValuesEntry] for the given level, bucket and slot.
@@ -414,7 +370,7 @@ impl LevelHashIO {
         slot: _SlotIdxT,
     ) -> Option<ValuesEntry> {
         self.val_addr_at(level, bucket, slot)
-            .map(|addr| ValuesEntry::at(addr - 1))
+            .map(|addr| ValuesEntry::at(addr - 1, &mut self.values))
     }
 }
 
@@ -428,14 +384,14 @@ impl LevelHashIO {
         slot: _SlotIdxT,
     ) -> bool {
         self.val_entry_for_slot(level, bucket, slot)
-            .take_if(|entry| !entry.is_empty(&mut self.values))
+            .take_if(|entry| !entry.is_empty())
             .is_some()
     }
 
     /// Get the value for the given level, bucket and slot.
     pub fn value(&mut self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> Vec<u8> {
         self.val_entry_for_slot(level, bucket, slot)
-            .take_if(|entry| !entry.is_empty(&mut self.values))
+            .take_if(|entry| !entry.is_empty())
             .map(|entry| entry.value(&mut self.values))
             .unwrap_or(vec![])
     }
@@ -454,42 +410,42 @@ impl LevelHashIO {
         new_value: &LevelValueT,
     ) -> LevelUpdateResult {
         let slot_addr = self.slot_addr(level, bucket, slot);
-        self.keymap.seek(Start(slot_addr)).unwrap();
-
-        let val_addr = self.keymap.r_u64();
+        let val_addr = self.keymap.r_u64(slot_addr);
         if val_addr == Self::POS_INVALID {
             return Err(LevelUpdateError::SlotEmpty);
         }
 
-        let entry = ValuesEntry::at(val_addr - 1);
-        if entry.is_empty(&mut self.values) {
+        let entry = ValuesEntry::at(val_addr - 1, &mut self.values);
+        if entry.is_empty() {
             return Err(LevelUpdateError::EntryNotOccupied);
         }
 
-        let key = entry.key(&mut self.values);
-        let val_size_pos = self.values.pos;
+        let key_size = entry.key_size() as OffT;
         let (val_size, val) = entry.val_with_size(&mut self.values);
         let new_val_size = new_value.len() as u32;
 
         if val_size < new_val_size {
             // the existing entry cannot be used as it is too small,
             // so we need to re-allocate a new entry with appropriate size
-            self.append_entry_at_slot(slot_addr, &key, new_value)
-                .into_lvl_upd_err()?;
-            return Ok(val);
+            let key = entry.key(&mut self.values);
+            return self
+                .append_entry_at_slot(slot_addr, &key, new_value)
+                .map(|_| val)
+                .map_err(|e| LevelUpdateError::from(e));
         }
 
-        self.values.seek(Start(val_size_pos)).unwrap();
-        self.values.w_u32(new_val_size);
+        let entry_data = entry.data_mut();
+        entry_data.value_size = new_val_size;
 
+        let value_offset = entry.addr + ValuesEntry::OFF_KEY + key_size;
         if new_val_size > 0 {
-            self.values.write(new_value).unwrap();
+            self.values.write_at(value_offset, new_value);
         }
 
         if new_val_size < val_size {
             // the new value is smaller than the old value,
             // so we need to deallocate the extra space
-            let offset = val_size_pos + SIZE_U32 + new_val_size as OffT;
+            let offset = value_offset + new_val_size as OffT;
             self.val_deallocate(offset, (val_size - new_val_size) as OffT);
         }
 
@@ -516,9 +472,7 @@ impl LevelHashIO {
             return Ok(());
         }
 
-        self.keymap.seek(Start(slot_addr)).unwrap();
-
-        let existing_val_addr = self.keymap.r_u64();
+        let existing_val_addr = self.keymap.r_u64(slot_addr);
         let is_update = existing_val_addr > Self::POS_INVALID;
 
         self.append_entry_at_slot(slot_addr, key, value)?;
@@ -541,53 +495,46 @@ impl LevelHashIO {
         let tail_addr = self.meta.val_tail_addr();
 
         // this may be the first entry in the values file
-        let tail = (tail_addr > Self::POS_INVALID).then(|| ValuesEntry::at(tail_addr - 1));
-        let this_val_addr = tail
-            .as_ref()
-            .map(|e| e.next_entry(&mut self.values))
-            .unwrap_or(1);
+        let tail = (tail_addr > Self::POS_INVALID)
+            .then(|| ValuesEntry::at(tail_addr - 1, &mut self.values));
+        let this_val_addr = tail.as_ref().map(|e| e.next_entry()).unwrap_or(1);
         if this_val_addr + 4 * Self::KB_1 > self.meta.val_file_size() {
             self.val_resize(this_val_addr - 1 + Self::VALUES_SEGMENT_SIZE_BYTES)
                 .into_lvl_ins_err()?;
         }
 
-        // valuesResize call above will reset the position to 0,
-        // so we need to call seek(...) here
-        self.values.seek(Start(this_val_addr - 1)).unwrap();
+        let this_entry = ValuesEntry::at(this_val_addr - 1, &mut self.values);
+        let this_data = this_entry.data_mut();
 
-        if self.values.r_u32() > 0 {
+        if !this_entry.is_empty() {
             // entry_size > 0
             // entry is occupied
             return Err(LevelInsertionError::DuplicateKey);
         }
 
-        let entry_start = self.values.pos;
+        let key_len = key.len() as u32;
+        let val_len = value.len() as u32;
 
-        // seek over prev_entry and next_entry
-        self.values
-            .seek(Current((SIZE_U64 + SIZE_U64) as i64))
-            .unwrap();
+        let key_off = this_entry.addr + ValuesEntry::OFF_KEY;
+        self.values.write_at(key_off, key);
+        this_data.key_size = key_len;
 
-        self.write_obj(key);
-        self.write_obj(value);
+        self.values.write_at(key_off + key_len as OffT, value);
+        this_data.value_size = val_len;
 
-        let entry_end = self.values.pos;
-        let entry_size = entry_end - entry_start;
-        assert!(entry_size <= u32::MAX as OffT);
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + key_len as OffT + val_len as OffT;
+        assert!(entry_size <= u64::MAX as OffT);
 
         if let Some(t) = tail.as_ref() {
             // make curret_tail.next -> this_entry
             self.values
-                .seek(Start(t.addr + ValuesEntry::OFF_NEXT_ENTRY))
-                .unwrap();
-            self.values.w_u64(this_val_addr);
+                .w_u64(t.addr + ValuesEntry::OFF_NEXT_ENTRY, this_val_addr);
         }
 
         // this this_entry.prev -> current_tail
-        self.values.seek(Start(this_val_addr - 1)).unwrap();
-        self.values.w_u32(entry_size as u32);
-        self.values.w_u64(tail_addr);
-        self.values.w_u64(entry_end + 1);
+        this_data.entry_size = entry_size;
+        this_data.prev_entry = tail_addr;
+        this_data.next_entry = align_8(this_entry.addr + entry_size) + 1; // 1-based
 
         // finally, current_tail = this_entry
         self.meta.set_val_tail_addr(this_val_addr);
@@ -596,38 +543,9 @@ impl LevelHashIO {
             self.meta.set_val_head_addr(this_val_addr);
         }
 
-        self.keymap.seek(Start(slot_addr)).unwrap();
-        self.keymap.w_u64(this_val_addr);
+        self.keymap.w_u64(slot_addr, this_val_addr);
 
         Ok(())
-    }
-
-    /// Write an object to the values file. This directly writes the object to the values file,
-    /// without seeking the cursor. As a result, a caller must ensure that the values file cursor
-    /// is at the right position.
-    ///
-    /// The size of the object will be written first as u32, followed by the object itself. The values
-    /// file cursor will be advanced to the end of the written object.
-    fn write_obj(&mut self, obj: &[u8]) {
-        let len = obj.len();
-        assert!(len <= u32::MAX as usize);
-        let len = len as u32;
-
-        let size_addr = self.values.pos;
-        self.values.w_u32(len);
-
-        if len == 0 {
-            return;
-        }
-
-        let val_addr = self.values.pos;
-        self.values.write(obj).unwrap();
-
-        let final_addr = self.values.pos;
-        self.values.seek(Start(size_addr)).unwrap();
-
-        self.values.w_u32((final_addr - val_addr) as u32);
-        self.values.seek(Start(final_addr)).unwrap();
     }
 
     /// Delete the entry at the given slot position, optionally reading the existing value if `read_value`
@@ -639,8 +557,7 @@ impl LevelHashIO {
         key: &LevelKeyT,
         read_value: bool,
     ) -> Option<Vec<u8>> {
-        self.keymap.seek(Start(slot_addr)).unwrap();
-        let val_addr = self.keymap.r_u64();
+        let val_addr = self.keymap.r_u64(slot_addr);
         self.km_deallocate(slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
         return self.delete_at(val_addr, Some(key), read_value);
     }
@@ -662,9 +579,9 @@ impl LevelHashIO {
             return None;
         }
 
-        let entry = ValuesEntry::at(val_addr - 1);
-        let prev = entry.prev_entry(&mut self.values); // 1-based
-        let next = entry.next_entry(&mut self.values); // 1-based
+        let entry = ValuesEntry::at(val_addr - 1, &mut self.values);
+        let prev = entry.prev_entry(); // 1-based
+        let next = entry.next_entry(); // 1-based
 
         if let Some(k) = key {
             // if we have been provided with a key, then check if the key matches
@@ -679,8 +596,7 @@ impl LevelHashIO {
         if prev > 0 {
             let mut addr = next;
             if next > Self::POS_INVALID {
-                self.values.seek(Start(next - 1)).unwrap();
-                if self.values.r_u32() <= 0 {
+                if self.values.r_u32(next - 1) <= 0 {
                     // 'nextEntry' points to an address which is not occupied
                     // in this case, the 'next' of previous entry should point to this
                     // (current) entry so the next time an entry will be written, it
@@ -688,20 +604,15 @@ impl LevelHashIO {
                     addr = val_addr
                 }
             }
-
             self.values
-                .seek(Start(prev - 1 + ValuesEntry::OFF_NEXT_ENTRY))
-                .unwrap();
-            self.values.w_u64(addr); // 1-based
+                .w_u64(prev - 1 + ValuesEntry::OFF_NEXT_ENTRY, addr); // 1-based
         }
 
         // if this entry has a next entry, then,
         // update the 'prev' of next entry to point to the 'prev' of this entry
         if next > 0 {
             self.values
-                .seek(Start(next - 1 + ValuesEntry::OFF_PREV_ENTRY))
-                .unwrap();
-            self.values.w_u64(prev); // 1-based
+                .w_u64(next - 1 + ValuesEntry::OFF_PREV_ENTRY, prev); // 1-based
         }
 
         if self.meta.val_head_addr() == val_addr {
@@ -720,29 +631,11 @@ impl LevelHashIO {
             });
         }
 
-        self.values.seek(Start(entry.addr)).unwrap();
+        let entry_size = entry.esize() as OffT;
+        let mut result: Option<Vec<u8>> = None;
 
-        let mut entry_size = SIZE_U32 + SIZE_U64 + SIZE_U64;
-        self.values.seek(Current(entry_size as i64)).unwrap();
-
-        let key_size = self.values.r_u32();
-        entry_size += SIZE_U32;
-        entry_size += key_size as OffT;
-
-        if key_size > 0 {
-            self.values.seek(Current(key_size as i64)).unwrap();
-        }
-
-        let val_size = self.values.r_u32();
-        entry_size += SIZE_U32;
-        entry_size += val_size as OffT;
-
-        let mut result = None;
-
-        if read_value && val_size > 0 {
-            let mut value = vec![0u8; val_size as usize];
-            self.values.read(&mut value).unwrap();
-            result = Some(value)
+        if read_value {
+            result = Some(entry.value(&mut self.values));
         }
 
         self.val_deallocate(entry.addr, entry_size);
@@ -752,8 +645,8 @@ impl LevelHashIO {
 
     /// Clear all entries in the keymap and values files.
     pub(crate) fn clear(&mut self) -> LevelClearResult {
-        self.meta.set_val_head_addr(0);
-        self.meta.set_val_tail_addr(0);
+        self.meta.set_val_head_addr(Self::POS_INVALID);
+        self.meta.set_val_tail_addr(Self::POS_INVALID);
         self.meta.set_km_l0_addr(0);
 
         let level_size = self.meta.km_level_size();
@@ -807,8 +700,7 @@ impl LevelHashIO {
         // destination slot
         let d_slot_addr = self.slot_addr_for_lvl_addr(interim_lvl, interim_bucket, interim_slot);
 
-        self.keymap.seek(Start(d_slot_addr)).unwrap();
-        let d_val_addr = self.keymap.r_u64();
+        let d_val_addr = self.keymap.r_u64(d_slot_addr);
         if d_val_addr > Self::POS_INVALID {
             // this slot is occupied
             return false;
@@ -820,12 +712,10 @@ impl LevelHashIO {
         // where the source slot points to
 
         // 1. read the address where the source slot points
-        self.keymap.seek(Start(s_slot_addr)).unwrap();
-        let e_val_addr = self.keymap.r_u64();
+        let e_val_addr = self.keymap.r_u64(s_slot_addr);
 
         // 2. move the destination slot and write the address of the source slot's value
-        self.keymap.seek(Start(d_slot_addr)).unwrap();
-        self.keymap.w_u64(e_val_addr);
+        self.keymap.w_u64(d_slot_addr, e_val_addr);
 
         // 3. deallocate the space occupied by the source slot
         self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);

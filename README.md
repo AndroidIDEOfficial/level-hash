@@ -73,12 +73,12 @@ values {
    u64 magic_number;
    value values[];
    value {
-     u32 entry_size;
+     u64 entry_size;
      u64 prev_entry;
      u64 next_entry;
      u32 key_size;
-     u8 key[key_size];
      u32 value_size;
+     u8 key[key_size];
      u8 value[value_size];
    }
 }
@@ -89,8 +89,7 @@ The `values` structure constains fields :
 - `values` - The value entries.
 
 Each `value` entry contains fields :
-- `entry_size` - The size of the entry in bytes (excluding the size of this
-   `entry_size` field i.e. 4).
+- `entry_size` - The size of the entry in bytes (all fields inclusive).
 - `prev_entry` - The address of the previous entry in the values file.
 - `next_entry` - The address of the next entry in the values file.
 - `key_size` - The size of the key in bytes.

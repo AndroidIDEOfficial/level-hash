@@ -16,9 +16,6 @@
  */
 use crate::types::OffT;
 
-/// Size of a byte.
-pub const SIZE_U8: OffT = 1;
-
 /// Size of an int.
 pub const SIZE_U32: OffT = 4;
 

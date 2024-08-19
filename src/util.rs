@@ -21,6 +21,8 @@ use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
 
+use crate::types::OffT;
+
 /// Open the file in read-write mode, or panic.
 pub(crate) fn file_open_or_panic(path: &Path, read: bool, write: bool, create: bool) -> File {
     let file = File::options()
@@ -54,6 +56,10 @@ pub fn generate_seeds() -> (u64, u64) {
     }
 
     (fseed, sseed)
+}
+
+pub(crate) fn align_8(addr: OffT) -> OffT {
+    (addr + 7) & !7
 }
 
 pub(crate) trait IsTrue {
