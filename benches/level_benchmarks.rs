@@ -15,9 +15,12 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 use gxhash::GxHasher;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
 
 use std::fs;
 use std::hash::Hasher;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 

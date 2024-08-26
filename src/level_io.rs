@@ -59,6 +59,7 @@ pub const VALUES_SEGMENT_SIZE_DEFAULT: OffT = 512 * 1024;
 /// * `meta`: The memory-mapped file containing the level hash metadata.
 /// * `interim_lvm_addr`: The addreess of the interim level in the keymap file that is used during
 /// expansion.
+#[derive(Debug)]
 pub struct LevelHashIO {
     pub values: MappedFile,
     pub keymap: MappedFile,
@@ -73,12 +74,116 @@ pub struct LevelHashIO {
 /// * - `addr` - The address of the entry in the values file.
 /// * - `data` - A pointer to the data representation in memory.
 #[repr(C)]
-pub(crate) struct ValuesEntry {
+pub(crate) struct ValuesEntry<'inst> {
     pub addr: OffT,
-    pub data: *mut ValuesData,
+    pub data: &'inst ValuesData,
 }
 
-impl ValuesEntry {
+#[repr(C)]
+pub(crate) struct ValuesEntryMut<'inst> {
+    pub addr: OffT,
+    pub data: &'inst mut ValuesData,
+}
+
+pub(crate) trait ValEntryReadExt {
+    fn data(&self) -> &ValuesData;
+    fn esize(&self) -> u64;
+    fn esizeeq(&self, size: u64) -> bool;
+    fn is_empty(&self) -> bool;
+    fn prev_entry(&self) -> OffT;
+    fn next_entry(&self) -> OffT;
+    fn key_size(&self) -> u32;
+    fn ksizeeq(&self, size: u32) -> bool;
+    fn value_size(&self) -> u32;
+    fn key(&self, file: &MappedFile) -> Vec<u8>;
+    fn keyeq(&self, file: &MappedFile, other: &LevelKeyT) -> bool;
+    fn val_with_size(&self, file: &MappedFile) -> (u32, Vec<u8>);
+    fn value(&self, file: &MappedFile) -> Vec<u8>;
+}
+
+pub(crate) trait ValEntryWriteExt {
+    fn data_mut(&mut self) -> &mut ValuesData;
+}
+
+macro_rules! val_entry_read_impl {
+    ($($typ:ident < $lt:lifetime > $(,)?)+) => {
+        $(
+            impl ValEntryReadExt for $typ <$lt> {
+
+                fn data(&self) -> &ValuesData {
+                    &self.data
+                }
+
+                fn esize(&self) -> u64 {
+                    self.data().entry_size
+                }
+
+                fn esizeeq(&self, size: u64) -> bool {
+                    self.esize() == size
+                }
+
+                fn is_empty(&self) -> bool {
+                    return self.esizeeq(0);
+                }
+
+                fn prev_entry(&self) -> OffT {
+                    self.data().prev_entry
+                }
+
+                fn next_entry(&self) -> OffT {
+                    self.data().next_entry
+                }
+
+                fn key_size(&self) -> u32 {
+                    self.data().key_size
+                }
+
+                fn ksizeeq(&self, size: u32) -> bool {
+                    self.data().key_size == size
+                }
+
+                fn value_size(&self) -> u32 {
+                    self.data().value_size
+                }
+
+                fn key(&self, file: &MappedFile) -> Vec<u8> {
+                    let size = self.key_size() as usize;
+                    if size == 0 {
+                        return vec![];
+                    }
+
+                    let mut key = vec![0u8; size];
+                    file.read_at(self.addr + ValuesEntry::OFF_KEY, key.as_mut_slice());
+                    key
+                }
+
+                fn keyeq(&self, file: &MappedFile, other: &LevelKeyT) -> bool {
+                    return self.ksizeeq(other.len() as u32)
+                        && file.memeq(self.addr + ValuesEntry::OFF_KEY, other);
+                }
+
+                fn val_with_size(&self, file: &MappedFile) -> (u32, Vec<u8>) {
+                    let size = self.value_size();
+                    if size == 0 {
+                        return (size, vec![]);
+                    }
+
+                    let size = size as usize;
+                    let key_size = self.key_size() as OffT;
+                    let mut value = vec![0u8; size];
+                    file.read_at(self.addr + ValuesEntry::OFF_KEY + key_size, value.as_mut_slice());
+                    (size as u32, value)
+                }
+
+                fn value(&self, file: &MappedFile) -> Vec<u8> {
+                    self.val_with_size(file).1
+                }
+            }
+        )+
+    };
+}
+
+impl ValuesEntry<'_> {
     pub const OFF_ENTRY_SIZE: OffT = 0;
     pub const OFF_PREV_ENTRY: OffT = Self::OFF_ENTRY_SIZE + ValuesData::SIZE_entry_size as OffT;
     pub const OFF_NEXT_ENTRY: OffT = Self::OFF_PREV_ENTRY + ValuesData::SIZE_prev_entry as OffT;
@@ -89,88 +194,26 @@ impl ValuesEntry {
     pub const ENTRY_SIZE_MIN: OffT = Self::OFF_KEY - Self::OFF_ENTRY_SIZE;
 
     /// Create [ValuesEntry] representing the entry at `addr` in the values file.
-    pub fn at(addr: OffT, file: &mut MappedFile) -> Self {
-        let data = unsafe { file.map.as_mut_ptr().add(addr as usize) as *mut ValuesData };
-        ValuesEntry { addr, data }
+    pub fn at(addr: OffT, file: &MappedFile) -> Self {
+        let data = unsafe { &*(file.map.as_ptr().add(addr as usize) as *const ValuesData) };
+        Self { addr, data }
     }
 }
 
-impl ValuesEntry {
-    pub fn data(&self) -> &ValuesData {
-        unsafe { &(*self.data) }
-    }
-
-    pub fn data_mut(&self) -> &mut ValuesData {
-        unsafe { &mut (*self.data) }
-    }
-
-    pub fn esize(&self) -> u64 {
-        self.data().entry_size
-    }
-
-    #[inline]
-    pub fn esizeeq(&self, size: u64) -> bool {
-        self.esize() == size
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        return self.esizeeq(0);
-    }
-
-    pub fn prev_entry(&self) -> OffT {
-        self.data().prev_entry
-    }
-
-    pub fn next_entry(&self) -> OffT {
-        self.data().next_entry
-    }
-
-    pub fn key_size(&self) -> u32 {
-        self.data().key_size
-    }
-
-    pub fn ksizeeq(&self, size: u32) -> bool {
-        self.data().key_size == size
-    }
-
-    pub fn value_size(&self) -> u32 {
-        self.data().value_size
-    }
-
-    pub fn key(&self, file: &mut MappedFile) -> Vec<u8> {
-        let size = self.key_size() as usize;
-        if size == 0 {
-            return vec![];
-        }
-
-        let mut key = vec![0u8; size];
-        file.read_at(self.addr + Self::OFF_KEY, key.as_mut_slice());
-        key
-    }
-
-    /// Compare the key region in the memory mapped file with the given key.
-    pub fn keyeq(&self, file: &mut MappedFile, other: &LevelKeyT) -> bool {
-        return self.ksizeeq(other.len() as u32) && file.memeq(self.addr + Self::OFF_KEY, other);
-    }
-
-    pub fn val_with_size(&self, file: &mut MappedFile) -> (u32, Vec<u8>) {
-        let size = self.value_size();
-        if size == 0 {
-            return (size, vec![]);
-        }
-
-        let size = size as usize;
-        let key_size = self.key_size() as OffT;
-        let mut value = vec![0u8; size];
-        file.read_at(self.addr + Self::OFF_KEY + key_size, value.as_mut_slice());
-        (size as u32, value)
-    }
-
-    pub fn value(&self, file: &mut MappedFile) -> Vec<u8> {
-        self.val_with_size(file).1
+impl ValuesEntryMut<'_> {
+    fn at(addr: OffT, file: &mut MappedFile) -> Self {
+        let data = unsafe { &mut *(file.map.as_mut_ptr().add(addr as usize) as *mut ValuesData) };
+        Self { addr, data }
     }
 }
+
+impl ValEntryWriteExt for ValuesEntryMut<'_> {
+    fn data_mut(&mut self) -> &mut ValuesData {
+        self.data
+    }
+}
+
+val_entry_read_impl!(ValuesEntry<'_>, ValuesEntryMut<'_>);
 
 impl LevelHashIO {
     /// Create a new [LevelHashIO] from the given index directory and index name.
@@ -210,7 +253,7 @@ impl LevelHashIO {
 
         let mut meta = MetaIO::new(&meta_file, level_size, bucket_size)?;
 
-        let val_size = meta.val_file_size();
+        let val_size = meta.read().0.val_file_size;
         let km_size = meta.km_size();
         let val_file_size = Self::val_real_offset(val_size);
         let km_file_size = Self::km_real_offset(km_size);
@@ -286,11 +329,12 @@ impl LevelHashIO {
     }
 
     fn val_resize(&mut self, new_size: OffT) -> LevelRemapResult {
-        if self.meta.val_file_size() == new_size {
+        let (meta, _) = self.meta.write();
+        if meta.val_file_size == new_size {
             return Ok(());
         }
 
-        self.meta.set_val_file_size(new_size);
+        meta.val_file_size = new_size;
         ftruncate_safe(self.values.fd.as_raw_fd(), new_size);
         self.values.remap(new_size)?;
 
@@ -310,14 +354,15 @@ impl LevelHashIO {
 
     /// Get the address of the slot entry in the keymap file for the given level, bucket and slot.
     pub(crate) fn slot_addr(
-        &mut self,
+        &self,
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
     ) -> OffT {
+        let (meta, _) = self.meta.read();
         let lvl_addr = match level {
-            0 => self.meta.km_l0_addr(),
-            1 => self.meta.km_l1_addr(),
+            0 => meta.km_l0_addr,
+            1 => meta.km_l1_addr,
             _ => panic!("invalid level index"),
         };
 
@@ -325,19 +370,14 @@ impl LevelHashIO {
     }
 
     /// Get the address of the slot entry in the keymap file for the given level offset, bucket and slot.
-    fn slot_addr_for_lvl_addr(
-        &mut self,
-        lvl_addr: OffT,
-        bucket: _BucketIdxT,
-        slot: _SlotIdxT,
-    ) -> OffT {
+    fn slot_addr_for_lvl_addr(&self, lvl_addr: OffT, bucket: _BucketIdxT, slot: _SlotIdxT) -> OffT {
         lvl_addr + // start position of level
-            (Self::KEYMAP_ENTRY_SIZE_BYTES * self.meta.km_bucket_size() as OffT * bucket as OffT) + // bucket position
+            (Self::KEYMAP_ENTRY_SIZE_BYTES * self.meta.read().0.km_bucket_size as OffT * bucket as OffT) + // bucket position
             (Self::KEYMAP_ENTRY_SIZE_BYTES * slot as OffT)
     }
 
     pub(crate) fn slot_and_val_addr_at(
-        &mut self,
+        &self,
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
@@ -353,24 +393,19 @@ impl LevelHashIO {
     }
 
     /// Get the address of the value entry in the values file for the given level, bucket and slot.
-    fn val_addr_at(
-        &mut self,
-        level: _LevelIdxT,
-        bucket: _BucketIdxT,
-        slot: _SlotIdxT,
-    ) -> Option<OffT> {
+    fn val_addr_at(&self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> Option<OffT> {
         self.slot_and_val_addr_at(level, bucket, slot).1
     }
 
     /// Get the [ValuesEntry] for the given level, bucket and slot.
     pub fn val_entry_for_slot(
-        &mut self,
+        &self,
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
     ) -> Option<ValuesEntry> {
         self.val_addr_at(level, bucket, slot)
-            .map(|addr| ValuesEntry::at(addr - 1, &mut self.values))
+            .map(|addr| ValuesEntry::at(addr - 1, &self.values))
     }
 }
 
@@ -378,7 +413,7 @@ impl LevelHashIO {
     /// Check if the slot is occupied.
     //noinspection RsSelfConvention
     pub(crate) fn is_occupied(
-        &mut self,
+        &self,
         level: _LevelIdxT,
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
@@ -389,10 +424,10 @@ impl LevelHashIO {
     }
 
     /// Get the value for the given level, bucket and slot.
-    pub fn value(&mut self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> Vec<u8> {
+    pub fn value(&self, level: _LevelIdxT, bucket: _BucketIdxT, slot: _SlotIdxT) -> Vec<u8> {
         self.val_entry_for_slot(level, bucket, slot)
             .take_if(|entry| !entry.is_empty())
-            .map(|entry| entry.value(&mut self.values))
+            .map(|entry| entry.value(&self.values))
             .unwrap_or(vec![])
     }
 }
@@ -415,13 +450,13 @@ impl LevelHashIO {
             return Err(LevelUpdateError::SlotEmpty);
         }
 
-        let entry = ValuesEntry::at(val_addr - 1, &mut self.values);
+        let mut entry = ValuesEntryMut::at(val_addr - 1, &mut self.values);
         if entry.is_empty() {
             return Err(LevelUpdateError::EntryNotOccupied);
         }
 
         let key_size = entry.key_size() as OffT;
-        let (val_size, val) = entry.val_with_size(&mut self.values);
+        let (val_size, val) = entry.val_with_size(&self.values);
         let new_val_size = new_value.len() as u32;
 
         if val_size < new_val_size {
@@ -492,19 +527,25 @@ impl LevelHashIO {
         key: &LevelKeyT,
         value: &LevelValueT,
     ) -> LevelResult<(), LevelInsertionError> {
-        let tail_addr = self.meta.val_tail_addr();
+        let tail_addr: OffT;
+        let val_file_size: OffT;
+        {
+            let (meta, _) = self.meta.read();
+            tail_addr = meta.val_tail_addr;
+            val_file_size = meta.val_file_size;
+        }
 
         // this may be the first entry in the values file
-        let tail = (tail_addr > Self::POS_INVALID)
-            .then(|| ValuesEntry::at(tail_addr - 1, &mut self.values));
+        let tail =
+            (tail_addr > Self::POS_INVALID).then(|| ValuesEntry::at(tail_addr - 1, &self.values));
         let this_val_addr = tail.as_ref().map(|e| e.next_entry()).unwrap_or(1);
-        if this_val_addr + 4 * Self::KB_1 > self.meta.val_file_size() {
+        if this_val_addr + 4 * Self::KB_1 > val_file_size {
             self.val_resize(this_val_addr - 1 + Self::VALUES_SEGMENT_SIZE_BYTES)
                 .into_lvl_ins_err()?;
         }
 
-        let this_entry = ValuesEntry::at(this_val_addr - 1, &mut self.values);
-        let this_data = this_entry.data_mut();
+        let mut this_entry = ValuesEntryMut::at(this_val_addr - 1, &mut self.values);
+        let this_entry_addr = this_entry.addr;
 
         if !this_entry.is_empty() {
             // entry_size > 0
@@ -512,10 +553,12 @@ impl LevelHashIO {
             return Err(LevelInsertionError::DuplicateKey);
         }
 
+        let this_data = this_entry.data_mut();
+
         let key_len = key.len() as u32;
         let val_len = value.len() as u32;
 
-        let key_off = this_entry.addr + ValuesEntry::OFF_KEY;
+        let key_off = this_entry_addr + ValuesEntry::OFF_KEY;
         self.values.write_at(key_off, key);
         this_data.key_size = key_len;
 
@@ -534,13 +577,14 @@ impl LevelHashIO {
         // this this_entry.prev -> current_tail
         this_data.entry_size = entry_size;
         this_data.prev_entry = tail_addr;
-        this_data.next_entry = align_8(this_entry.addr + entry_size) + 1; // 1-based
+        this_data.next_entry = align_8(this_entry_addr + entry_size) + 1; // 1-based
 
         // finally, current_tail = this_entry
-        self.meta.set_val_tail_addr(this_val_addr);
+        let (meta, _) = self.meta.write();
+        meta.val_tail_addr = this_val_addr;
 
-        if self.meta.val_head_addr() == Self::POS_INVALID {
-            self.meta.set_val_head_addr(this_val_addr);
+        if meta.val_head_addr == Self::POS_INVALID {
+            meta.val_head_addr = this_val_addr;
         }
 
         self.keymap.w_u64(slot_addr, this_val_addr);
@@ -579,7 +623,7 @@ impl LevelHashIO {
             return None;
         }
 
-        let entry = ValuesEntry::at(val_addr - 1, &mut self.values);
+        let entry = ValuesEntry::at(val_addr - 1, &self.values);
         let prev = entry.prev_entry(); // 1-based
         let next = entry.next_entry(); // 1-based
 
@@ -615,20 +659,21 @@ impl LevelHashIO {
                 .w_u64(next - 1 + ValuesEntry::OFF_PREV_ENTRY, prev); // 1-based
         }
 
-        if self.meta.val_head_addr() == val_addr {
-            self.meta.set_val_head_addr(if next > Self::POS_INVALID {
+        let (meta, _) = self.meta.write();
+        if meta.val_head_addr == val_addr {
+            meta.val_head_addr = if next > Self::POS_INVALID {
                 next
             } else {
                 Self::POS_INVALID
-            });
+            };
         }
 
-        if self.meta.val_tail_addr() == val_addr {
-            self.meta.set_val_tail_addr(if prev > Self::POS_INVALID {
+        if meta.val_tail_addr == val_addr {
+            meta.val_tail_addr = if prev > Self::POS_INVALID {
                 prev
             } else {
                 Self::POS_INVALID
-            });
+            };
         }
 
         let entry_size = entry.esize() as OffT;
@@ -645,14 +690,15 @@ impl LevelHashIO {
 
     /// Clear all entries in the keymap and values files.
     pub(crate) fn clear(&mut self) -> LevelClearResult {
-        self.meta.set_val_head_addr(Self::POS_INVALID);
-        self.meta.set_val_tail_addr(Self::POS_INVALID);
-        self.meta.set_km_l0_addr(0);
+        let (meta, _) = self.meta.write();
+        meta.val_head_addr = Self::POS_INVALID;
+        meta.val_tail_addr = Self::POS_INVALID;
+        meta.km_l0_addr = 0;
 
-        let level_size = self.meta.km_level_size();
-        let bucket_size = self.meta.km_bucket_size();
+        let level_size = meta.km_level_size;
+        let bucket_size = meta.km_bucket_size;
         let l1_addr = (1 << level_size) * bucket_size as OffT * Self::KEYMAP_ENTRY_SIZE_BYTES;
-        self.meta.set_km_l1_addr(l1_addr);
+        meta.km_l1_addr = l1_addr;
 
         let km_size = l1_addr + (l1_addr >> 1);
 
@@ -670,7 +716,7 @@ impl LevelHashIO {
         assert!(self.interim_lvl_addr.is_none());
 
         let interim_size: OffT = bucket_count as OffT
-            * self.meta.km_bucket_size() as OffT
+            * self.meta.read().0.km_bucket_size as OffT
             * Self::KEYMAP_ENTRY_SIZE_BYTES;
 
         // ensure the keymap can accomodate the interim level
@@ -718,7 +764,7 @@ impl LevelHashIO {
         self.keymap.w_u64(d_slot_addr, e_val_addr);
 
         // 3. deallocate the space occupied by the source slot
-        self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
+        // self.km_deallocate(s_slot_addr, Self::KEYMAP_ENTRY_SIZE_BYTES);
 
         return true;
     }
@@ -728,14 +774,20 @@ impl LevelHashIO {
     pub(crate) fn commit_interim(&mut self, new_level_size: u8) {
         assert!(self.interim_lvl_addr.is_some());
 
+        let (meta, _) = self.meta.write();
+        let level_size = meta.km_level_size;
+        let l0_addr = meta.km_l0_addr;
+        let l1_addr = meta.km_l1_addr;
+
         // update the level size
-        self.meta.set_km_level_size(new_level_size);
+        meta.km_level_size = new_level_size;
 
         // current top level becomes the new bottom level
         // and interim level becomes the new top level
-        let l0_addr = self.meta.km_l0_addr();
-        self.meta.set_km_l1_addr(l0_addr);
-        self.meta.set_km_l0_addr(self.interim_lvl_addr.unwrap());
+        meta.km_l1_addr = l0_addr;
+        meta.km_l0_addr = self.interim_lvl_addr.unwrap();
         self.interim_lvl_addr = None;
+
+        self.km_deallocate(l1_addr, 1 << (level_size - 1))
     }
 }

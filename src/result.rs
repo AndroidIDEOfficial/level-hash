@@ -129,6 +129,10 @@ pub enum LevelExpansionError {
 
     /// An update error occurred while moving slots
     UpdateError(LevelUpdateError),
+
+    /// Occurs when trying to expand the level hash while another hash-level operation is in progress.
+    /// This hash-level operation can be another expand operation or the clear operation.
+    ConcurrentModificationError
 }
 
 /// Error occured during memory-mapping a file.

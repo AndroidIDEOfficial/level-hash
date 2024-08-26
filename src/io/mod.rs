@@ -14,6 +14,28 @@
  *  You should have received a copy of the GNU General Public License
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
+
+#[cfg(target_os = "android")]
+pub(crate) mod io_android;
+
+#[cfg(target_os = "linux")]
+pub(crate) mod io_linux;
+
+#[cfg(target_arch = "arm")]
+pub(crate) mod io_arm;
+#[cfg(target_arch = "arm")]
+pub(crate) use io_arm::__memneq;
+
+#[cfg(all(target_arch = "aarch64"))]
+pub(crate) mod io_aarch64;
+#[cfg(all(target_arch = "aarch64"))]
+pub(crate) use io_aarch64::__memneq;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub(crate) mod io_x86;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub(crate) use io_x86::__memneq;
+
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::fd::OwnedFd;
@@ -23,7 +45,6 @@ use byteorder::ByteOrder;
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
 
-use crate::__memneq;
 use crate::fs::fallocate_safe_punch;
 use crate::io;
 use crate::result::IntoLevelIOErr;
@@ -34,9 +55,10 @@ use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::types::OffT;
 
-pub type IOEndianness = byteorder::LittleEndian;
+pub type IOEndianness = byteorder::NativeEndian;
 
 /// A memory-mapped file.
+#[derive(Debug)]
 pub(crate) struct MappedFile {
     pub(crate) map: MmapMut,
     pub(crate) fd: OwnedFd,

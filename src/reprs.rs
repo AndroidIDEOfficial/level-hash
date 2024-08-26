@@ -30,6 +30,7 @@ macro_rules! def_layout {
         $($prop_name:ident: $prop_typ:ty $(,)?)+
     }) => {
         #[repr(C)]
+        #[derive(Debug)]
         pub(crate) struct $name {
             $(pub $prop_name: $prop_typ,)+
         }
@@ -64,30 +65,7 @@ macro_rules! def_layout {
     };
 }
 
-macro_rules! def_meta {
-    (struct $name:ident {
-        $($prop_name:ident : $prop_typ:ty$(,)?)+
-    }) => {
-        use paste::paste;
-        paste! {
-            def_layout!(struct $name { $($prop_name:$prop_typ,)+ });
-
-            impl crate::meta::MetaIO {
-                $(
-                    pub fn $prop_name(&self) -> $prop_typ {
-                        unsafe { (*self.meta).$prop_name }
-                    }
-
-                    pub fn [<set_ $prop_name>](&mut self, value: $prop_typ) {
-                        unsafe { (*self.meta).$prop_name = value; }
-                    }
-                )+
-            }
-        }
-    };
-}
-
-def_meta!(
+def_layout!(
     struct LevelMeta {
         val_version: u32,
         km_version: u32,
@@ -101,10 +79,12 @@ def_meta!(
     }
 );
 
-def_layout!(struct ValuesData {
-    entry_size: u64,
-    prev_entry: OffT,
-    next_entry: OffT,
-    key_size: u32,
-    value_size: u32,
-});
+def_layout!(
+    struct ValuesData {
+        entry_size: u64,
+        prev_entry: OffT,
+        next_entry: OffT,
+        key_size: u32,
+        value_size: u32,
+    }
+);

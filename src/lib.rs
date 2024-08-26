@@ -46,24 +46,3 @@ pub mod result;
 pub mod util;
 
 mod level_hash;
-
-#[cfg(target_os = "android")]
-pub(crate) mod io_android;
-
-#[cfg(target_os = "linux")]
-pub(crate) mod io_linux;
-
-#[cfg(target_arch = "arm")]
-pub(crate) mod io_arm;
-#[cfg(target_arch = "arm")]
-pub(crate) use io_arm::__memneq;
-
-#[cfg(all(target_arch = "aarch64"))]
-pub(crate) mod io_aarch64;
-#[cfg(all(target_arch = "aarch64"))]
-pub(crate) use io_aarch64::__memneq;
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub(crate) mod io_x86;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub(crate) use io_x86::__memneq;

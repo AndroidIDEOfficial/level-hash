@@ -11,21 +11,21 @@ fn gxhash(seed: u64, data: &[u8]) -> u64 {
 }
 
 fn main() {
-    let index_dir = Path::new(".");
+    let index_dir = Path::new("target");
     let (seed_1, seed_2) = generate_seeds();
     let mut hash = LevelHash::options()
         .auto_expand(true)
         .bucket_size(10)
         .level_size(13)
         .index_dir(&index_dir)
-        .index_name("test")
+        .index_name("insert-1000000")
         .seeds(seed_1, seed_2)
         .hash_fns(self::gxhash, self::gxhash)
         .build()
         .expect("failed to create level hash");
 
     let start = std::time::Instant::now();
-    for i in 0..100_000 {
+    for i in 0..1_000_000 {
         assert!(hash
             .insert(
                 format!("longlonglongkey{}", i).as_bytes(),
