@@ -15,7 +15,7 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-static LOG_ENABLED: bool = true;
+pub static LOG_ENABLED: bool = true;
 
 pub(crate) fn loge(msg: &str) {
     if LOG_ENABLED {

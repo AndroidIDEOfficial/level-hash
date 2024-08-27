@@ -253,7 +253,7 @@ impl LevelHashIO {
 
         let mut meta = MetaIO::new(&meta_file, level_size, bucket_size)?;
 
-        let val_size = meta.read().0.val_file_size;
+        let val_size = meta.read().val_file_size;
         let km_size = meta.km_size();
         let val_file_size = Self::val_real_offset(val_size);
         let km_file_size = Self::km_real_offset(km_size);
@@ -329,7 +329,7 @@ impl LevelHashIO {
     }
 
     fn val_resize(&mut self, new_size: OffT) -> LevelRemapResult {
-        let (meta, _) = self.meta.write();
+        let meta = self.meta.write();
         if meta.val_file_size == new_size {
             return Ok(());
         }
@@ -359,7 +359,7 @@ impl LevelHashIO {
         bucket: _BucketIdxT,
         slot: _SlotIdxT,
     ) -> OffT {
-        let (meta, _) = self.meta.read();
+        let meta = self.meta.read();
         let lvl_addr = match level {
             0 => meta.km_l0_addr,
             1 => meta.km_l1_addr,
@@ -372,7 +372,7 @@ impl LevelHashIO {
     /// Get the address of the slot entry in the keymap file for the given level offset, bucket and slot.
     fn slot_addr_for_lvl_addr(&self, lvl_addr: OffT, bucket: _BucketIdxT, slot: _SlotIdxT) -> OffT {
         lvl_addr + // start position of level
-            (Self::KEYMAP_ENTRY_SIZE_BYTES * self.meta.read().0.km_bucket_size as OffT * bucket as OffT) + // bucket position
+            (Self::KEYMAP_ENTRY_SIZE_BYTES * self.meta.read().km_bucket_size as OffT * bucket as OffT) + // bucket position
             (Self::KEYMAP_ENTRY_SIZE_BYTES * slot as OffT)
     }
 
@@ -530,7 +530,7 @@ impl LevelHashIO {
         let tail_addr: OffT;
         let val_file_size: OffT;
         {
-            let (meta, _) = self.meta.read();
+            let meta = self.meta.read();
             tail_addr = meta.val_tail_addr;
             val_file_size = meta.val_file_size;
         }
@@ -580,7 +580,7 @@ impl LevelHashIO {
         this_data.next_entry = align_8(this_entry_addr + entry_size) + 1; // 1-based
 
         // finally, current_tail = this_entry
-        let (meta, _) = self.meta.write();
+        let meta = self.meta.write();
         meta.val_tail_addr = this_val_addr;
 
         if meta.val_head_addr == Self::POS_INVALID {
@@ -659,7 +659,7 @@ impl LevelHashIO {
                 .w_u64(next - 1 + ValuesEntry::OFF_PREV_ENTRY, prev); // 1-based
         }
 
-        let (meta, _) = self.meta.write();
+        let meta = self.meta.write();
         if meta.val_head_addr == val_addr {
             meta.val_head_addr = if next > Self::POS_INVALID {
                 next
@@ -690,7 +690,7 @@ impl LevelHashIO {
 
     /// Clear all entries in the keymap and values files.
     pub(crate) fn clear(&mut self) -> LevelClearResult {
-        let (meta, _) = self.meta.write();
+        let meta = self.meta.write();
         meta.val_head_addr = Self::POS_INVALID;
         meta.val_tail_addr = Self::POS_INVALID;
         meta.km_l0_addr = 0;
@@ -716,7 +716,7 @@ impl LevelHashIO {
         assert!(self.interim_lvl_addr.is_none());
 
         let interim_size: OffT = bucket_count as OffT
-            * self.meta.read().0.km_bucket_size as OffT
+            * self.meta.read().km_bucket_size as OffT
             * Self::KEYMAP_ENTRY_SIZE_BYTES;
 
         // ensure the keymap can accomodate the interim level
@@ -774,7 +774,7 @@ impl LevelHashIO {
     pub(crate) fn commit_interim(&mut self, new_level_size: u8) {
         assert!(self.interim_lvl_addr.is_some());
 
-        let (meta, _) = self.meta.write();
+        let meta = self.meta.write();
         let level_size = meta.km_level_size;
         let l0_addr = meta.km_l0_addr;
         let l1_addr = meta.km_l1_addr;

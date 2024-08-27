@@ -2,7 +2,7 @@ use std::path::Path;
 
 use std::hash::Hasher;
 use gxhash::GxHasher;
-use level_hash::{generate_seeds, LevelHash};
+use level_hash::{util::generate_seeds, LevelHash};
 
 fn gxhash(seed: u64, data: &[u8]) -> u64 {
     let mut hasher = GxHasher::with_seed(seed as i64);

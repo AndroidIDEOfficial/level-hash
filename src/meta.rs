@@ -18,10 +18,6 @@ use std::cmp::min;
 use std::fs::File;
 use std::path::Path;
 
-use parking_lot::lock_api::RawRwLock;
-use parking_lot::lock_api::RwLockReadGuard;
-use parking_lot::lock_api::RwLockWriteGuard;
-
 use crate::fs::init_sparse_file;
 use crate::io::MappedFile;
 use crate::level_io::LevelHashIO;
@@ -51,18 +47,20 @@ impl LevelMetaPtr {
     fn ptr_mut(&mut self) -> *mut LevelMeta {
         self.0
     }
-}
 
-unsafe impl Send for LevelMetaPtr {}
-unsafe impl Sync for LevelMetaPtr {}
+    fn get(&self) -> &LevelMeta {
+        unsafe { &*self.ptr() }
+    }
+
+    fn get_mut(&mut self) -> &mut LevelMeta {
+        unsafe { &mut *self.ptr_mut() }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct MetaIO {
     _file: MappedFile,
-
-    /// DO NOT READ this field directly
-    /// Instead, use the read() and write() methods to ensure concurrency.
-    meta: parking_lot::RwLock<LevelMetaPtr>,
+    meta: LevelMetaPtr,
 }
 
 impl MetaIO {
@@ -93,10 +91,9 @@ impl MetaIO {
 
         let mut mmap =
             MappedFile::new(file.into(), 0, Self::META__SIZE_BYTES).into_lvl_init_err()?;
-        let meta =
-            parking_lot::RwLock::new(LevelMetaPtr::new(mmap.map.as_mut_ptr() as *mut LevelMeta));
-        let metaIo = MetaIO { _file: mmap, meta };
-        let (meta, _) = metaIo.write();
+        let meta = LevelMetaPtr::new(mmap.map.as_mut_ptr() as *mut LevelMeta);
+        let mut metaIo = MetaIO { _file: mmap, meta };
+        let meta = metaIo.write();
         if meta.val_version == 0 {
             meta.val_version = LEVEL_VALUES_VERSION;
         }
@@ -129,12 +126,12 @@ impl MetaIO {
     }
 
     pub fn km_start_addr(&mut self) -> OffT {
-        let (meta, _) = self.read();
+        let meta = self.read();
         min(meta.km_l0_addr, meta.km_l1_addr)
     }
 
     pub fn km_size(&mut self) -> OffT {
-        let (meta, _) = self.read();
+        let meta = self.read();
         let l0_bytes = (1u64 << meta.km_level_size)
             * meta.km_bucket_size as u64
             * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
@@ -144,26 +141,23 @@ impl MetaIO {
         return size;
     }
 
-    pub fn read(&self) -> (&LevelMeta, RwLockReadGuard<impl RawRwLock, impl Sized>) {
-        let guard = self.meta.read();
-        let meta = unsafe { &*guard.ptr() };
-        (meta, guard)
+    #[inline]
+    pub fn read(&self) -> &LevelMeta {
+        self.meta.get()
     }
 
-    pub fn write(&self) -> (&mut LevelMeta, RwLockWriteGuard<impl RawRwLock, impl Sized>) {
-        let mut guard = self.meta.write();
-        let meta = unsafe { &mut *guard.ptr_mut() };
-        (meta, guard)
+    #[inline]
+    pub fn write(&mut self) -> &mut LevelMeta {
+        self.meta.get_mut()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, sync::Arc};
+    use std::fs;
 
     use super::*;
     use crate::{BUCKET_SIZE_DEFAULT, LEVEL_SIZE_DEFAULT};
-    use tokio::task;
 
     fn create_meta_io(name: &str, create_new: bool) -> MetaIO {
         let meta_dir = Path::new("target/tests/level-hash").join(format!("meta-{}", name));
@@ -180,7 +174,7 @@ mod tests {
     #[test]
     fn test_meta_init_with_default_values() {
         let io = create_meta_io("init-with-default", true);
-        let (meta, _) = io.read();
+        let meta = io.read();
         assert_eq!(meta.val_version, LEVEL_VALUES_VERSION);
         assert_eq!(meta.km_version, LEVEL_KEYMAP_VERSION);
         assert_eq!(meta.val_head_addr, 0);
@@ -200,8 +194,8 @@ mod tests {
     #[test]
     fn test_meta_init_with_existing_file() {
         {
-            let io = create_meta_io("init-with-existing", true);
-            let (meta, _) = io.write();
+            let mut io = create_meta_io("init-with-existing", true);
+            let meta = io.write();
             meta.val_version = 2;
             meta.km_version = 3;
             meta.val_head_addr = 200;
@@ -213,7 +207,7 @@ mod tests {
 
         {
             let io = create_meta_io("init-with-existing", false);
-            let (meta, _) = io.read();
+            let meta = io.read();
             assert_eq!(meta.val_version, 2);
             assert_eq!(meta.km_version, 3);
             assert_eq!(meta.val_head_addr, 200);
@@ -232,110 +226,5 @@ mod tests {
                     * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES
             );
         }
-    }
-
-    #[tokio::test]
-    async fn test_meta_concurrent_read_write() {
-        let io = Arc::new(create_meta_io("concurrent-read-write", true));
-
-        let io1 = Arc::clone(&io);
-        let io2 = Arc::clone(&io);
-
-        // Task 1: Write to MetaIO
-        let write_task = task::spawn(async move {
-            let (meta, _) = io1.write();
-            meta.val_version = 2;
-            meta.km_version = 3;
-            meta.val_head_addr = 400;
-            meta.val_tail_addr = 500;
-        });
-
-        // Task 2: Read from MetaIO
-        let read_task = task::spawn(async move {
-            let (meta, _) = io2.read();
-            assert_eq!(meta.val_version, 2);
-            assert_eq!(meta.km_version, 3);
-            assert_eq!(meta.val_head_addr, 400);
-            assert_eq!(meta.val_tail_addr, 500);
-        });
-
-        // Ensure both tasks complete
-        write_task.await.unwrap();
-        read_task.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_meta_concurrent_writes() {
-        let io = Arc::new(create_meta_io("concurrent-writes", true));
-
-        let io1 = Arc::clone(&io);
-        let io2 = Arc::clone(&io);
-
-        // Task 1: Write to MetaIO
-        let write_task1 = task::spawn(async move {
-            let (meta, _) = io1.write();
-            meta.val_version = 2;
-            meta.km_version = 3;
-            meta.val_head_addr = 600;
-            meta.val_tail_addr = 700;
-        });
-
-        // Task 2: Write to MetaIO
-        let write_task2 = task::spawn(async move {
-            let (meta, _) = io2.write();
-            meta.val_version = 4;
-            meta.km_version = 5;
-            meta.val_head_addr = 800;
-            meta.val_tail_addr = 900;
-        });
-
-        // Ensure both tasks complete
-        write_task1.await.unwrap();
-        write_task2.await.unwrap();
-
-        // Final checks
-        let (meta, _) = io.read();
-        assert_eq!(meta.val_version, 4);
-        assert_eq!(meta.km_version, 5);
-        assert_eq!(meta.val_head_addr, 800);
-        assert_eq!(meta.val_tail_addr, 900);
-    }
-
-    #[tokio::test]
-    async fn test_meta_concurrent_reads() {
-        let io = Arc::new(create_meta_io("concurrent-reads", true));
-
-        let io1 = Arc::clone(&io);
-        let io2 = Arc::clone(&io);
-
-        {
-            let (meta, _) = io.write();
-            meta.val_version = 2;
-            meta.km_version = 3;
-            meta.val_head_addr = 1000;
-            meta.val_tail_addr = 1100;
-        }
-
-        // Task 1: Read from MetaIO
-        let read_task1 = task::spawn(async move {
-            let (meta, _) = io1.read();
-            assert_eq!(meta.val_version, 2);
-            assert_eq!(meta.km_version, 3);
-            assert_eq!(meta.val_head_addr, 1000);
-            assert_eq!(meta.val_tail_addr, 1100);
-        });
-
-        // Task 2: Read from MetaIO
-        let read_task2 = task::spawn(async move {
-            let (meta, _) = io2.read();
-            assert_eq!(meta.val_version, 2);
-            assert_eq!(meta.km_version, 3);
-            assert_eq!(meta.val_head_addr, 1000);
-            assert_eq!(meta.val_tail_addr, 1100);
-        });
-
-        // Ensure both tasks complete
-        read_task1.await.unwrap();
-        read_task2.await.unwrap();
     }
 }

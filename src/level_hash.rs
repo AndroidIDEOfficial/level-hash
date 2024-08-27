@@ -18,7 +18,6 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::generate_seeds;
 use crate::level_io::LevelHashIO;
 use crate::level_io::ValEntryReadExt;
 use crate::level_io::ValuesEntry;
@@ -39,6 +38,7 @@ use crate::types::LevelValueT;
 use crate::types::_BucketIdxT;
 use crate::types::_LevelIdxT;
 use crate::types::_SlotIdxT;
+use crate::util::generate_seeds;
 use crate::util::IsTrue;
 use crate::Level::L0;
 use crate::Level::L1;
@@ -288,7 +288,7 @@ impl LevelHash {
     /// Get the number of buckets in the top level.
     #[inline]
     pub fn top_level_bucket_count(&self) -> u32 {
-        1 << self.io.meta.read().0.km_level_size
+        1 << self.io.meta.read().km_level_size
     }
 
     /// Get the total number of buckets in the level hash.
@@ -300,7 +300,7 @@ impl LevelHash {
     /// Get the total number of slots in the level hash.
     #[inline]
     pub fn total_slots(&self) -> u64 {
-        let (meta, _) = self.io.meta.read();
+        let meta = self.io.meta.read();
         return (1u64 << meta.km_level_size) * meta.km_bucket_size as u64;
     }
 
@@ -369,7 +369,7 @@ impl LevelHash {
             LEVELS
         };
 
-        let bucket_size = self.io.meta.read().0.km_bucket_size as _SlotIdxT;
+        let bucket_size = self.io.meta.read().km_bucket_size as _SlotIdxT;
 
         for level in levels {
             let fidx = self.buck_idx_lvl(fhash, level);
@@ -585,7 +585,7 @@ impl LevelHash {
 
         let fhash = self.fhash(key);
         let shash = self.shash(key);
-        let bucket_size = self.io.meta.read().0.km_bucket_size as _SlotIdxT;
+        let bucket_size = self.io.meta.read().km_bucket_size as _SlotIdxT;
 
         // Check if there are any empty slots availale in any of the levels
         // If there are, insert the key-value pair and return true
@@ -704,7 +704,7 @@ impl LevelHash {
     ///
     /// The result of the expansion.
     pub fn expand(&mut self) -> LevelExpansionResult {
-        let level_size = self.io.meta.read().0.km_level_size;
+        let level_size = self.io.meta.read().km_level_size;
         if level_size == LEVEL_SIZE_MAX {
             return Err(crate::result::LevelExpansionError::MaxLevelSizeReached);
         }
@@ -718,7 +718,7 @@ impl LevelHash {
             .prepare_interim(new_top_level_capacity as u32)
             .into_lvl_exp_err()?;
 
-        let bucket_size = self.io.meta.read().0.km_bucket_size as _SlotIdxT;
+        let bucket_size = self.io.meta.read().km_bucket_size as _SlotIdxT;
 
         for old_buck_idx in 0..(self.top_level_bucket_count() >> 1) {
             for old_slot_idx in 0..bucket_size {
@@ -790,6 +790,9 @@ mod test {
     use std::assert_matches::assert_matches;
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::RwLock;
 
     use crate::io::IOEndianness;
     use crate::level_io::LevelHashIO;
@@ -965,7 +968,7 @@ mod test {
             options.level_size(5).bucket_size(10).auto_expand(false);
         });
 
-        let slots = hash.total_slots() - hash.io.meta.read().0.km_bucket_size as u64;
+        let slots = hash.total_slots() - hash.io.meta.read().km_bucket_size as u64;
         for i in 0..slots {
             let key = format!("key{}", i).as_bytes().to_vec();
             let value = format!("value{}", i).as_bytes().to_vec();
@@ -1027,11 +1030,11 @@ mod test {
         });
 
         let l0_size: u64 = hash.top_level_bucket_count() as u64
-            * hash.io.meta.read().0.km_bucket_size as u64
+            * hash.io.meta.read().km_bucket_size as u64
             * LevelHashIO::KEYMAP_ENTRY_SIZE_BYTES;
 
         {
-            let (meta, _) = hash.io.meta.read();
+            let meta = hash.io.meta.read();
             assert_eq!(meta.km_level_size, 5);
             assert_eq!(meta.km_bucket_size, 10);
             assert_eq!(meta.km_l0_addr, 0);
@@ -1041,7 +1044,7 @@ mod test {
         hash.expand().expect("failed to expand level hash");
 
         {
-            let (meta, _) = hash.io.meta.read();
+            let meta = hash.io.meta.read();
             assert_eq!(meta.km_level_size, 6);
             assert_eq!(meta.km_bucket_size, 10);
             assert_eq!(meta.km_l0_addr, l0_size + (l0_size >> 1));
@@ -1136,7 +1139,7 @@ mod test {
         let val_bytes = fs::read(&index_file).expect("Unable to read index file");
         let input = val_bytes.as_slice();
         {
-            let (meta, _) = hash.io.meta.read();
+            let meta = hash.io.meta.read();
             let meta_io = MetaIO::new(
                 Path::new(&meta_file),
                 meta.km_level_size,
@@ -1144,7 +1147,7 @@ mod test {
             )
             .expect("failed to create meta file");
 
-            let (meta, _) = meta_io.read();
+            let meta = meta_io.read();
             assert_eq!(meta.val_head_addr, 1);
             assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 1)) + 1);
         };
@@ -1194,7 +1197,7 @@ mod test {
             let input = val_bytes.as_slice();
 
             {
-                let (meta, _) = hash.io.meta.read();
+                let meta = hash.io.meta.read();
                 let meta_io = MetaIO::new(
                     Path::new(&meta_file),
                     meta.km_level_size,
@@ -1202,7 +1205,7 @@ mod test {
                 )
                 .expect("failed to create meta file");
 
-                let (meta, _) = meta_io.read();
+                let meta = meta_io.read();
                 assert_eq!(meta.val_head_addr, 1);
                 assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 1)) + 1);
             };
@@ -1232,7 +1235,7 @@ mod test {
             let input = val_bytes.as_slice();
 
             {
-                let (meta, _) = hash.io.meta.read();
+                let meta = hash.io.meta.read();
                 let meta_io = MetaIO::new(
                     Path::new(&meta_file),
                     meta.km_level_size,
@@ -1240,7 +1243,7 @@ mod test {
                 )
                 .expect("failed to create meta file");
 
-                let (meta, _) = meta_io.read();
+                let meta = meta_io.read();
                 assert_eq!(meta.val_head_addr, 1);
                 assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 2)) + 1);
             };
@@ -1298,7 +1301,7 @@ mod test {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let input = val_bytes.as_slice();
             {
-                let (meta, _) = hash.io.meta.read();
+                let meta = hash.io.meta.read();
                 let meta_io = MetaIO::new(
                     Path::new(&meta_file),
                     meta.km_level_size,
@@ -1306,7 +1309,7 @@ mod test {
                 )
                 .expect("failed to create meta file");
 
-                let (meta, _) = meta_io.read();
+                let meta = meta_io.read();
                 assert_eq!(meta.val_head_addr, 1);
                 assert_eq!(meta.val_tail_addr, (entry_size_aligned * (count - 1)) + 1);
             };
@@ -1343,7 +1346,7 @@ mod test {
             let val_bytes = fs::read(index_file).expect("Unable to read index file");
             let input = val_bytes.as_slice();
             {
-                let (meta, _) = hash.io.meta.read();
+                let meta = hash.io.meta.read();
                 let meta_io = MetaIO::new(
                     Path::new(&meta_file),
                     meta.km_level_size,
@@ -1351,7 +1354,7 @@ mod test {
                 )
                 .expect("failed to create meta file");
 
-                let (meta, _) = meta_io.read();
+                let meta = meta_io.read();
                 assert_eq!(meta.val_head_addr, 1);
                 assert_eq!(
                     meta.val_tail_addr,

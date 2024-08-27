@@ -31,17 +31,16 @@ compile_err!("This library only works on Linux/Android!");
 include!(concat!(env!("OUT_DIR"), "/cpu_features.rs"));
 
 pub use level_hash::*;
-pub use util::generate_seeds;
 
 pub(crate) mod fs;
 pub(crate) mod io;
 pub(crate) mod level_io;
-pub(crate) mod log;
 pub(crate) mod meta;
 pub(crate) mod reprs;
 pub(crate) mod size;
 pub(crate) mod types;
 
+pub mod log;
 pub mod result;
 pub mod util;
 
