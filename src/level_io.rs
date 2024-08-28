@@ -21,6 +21,7 @@ use std::path::Path;
 use crate::fs::ftruncate_safe;
 use crate::fs::ftruncate_safe_path;
 use crate::fs::init_sparse_file;
+use crate::fs::LockFile;
 use crate::io::MappedFile;
 use crate::meta::MetaIO;
 use crate::reprs::ValuesData;
@@ -65,6 +66,8 @@ pub struct LevelHashIO {
     pub keymap: MappedFile,
     pub meta: MetaIO,
     pub interim_lvl_addr: Option<OffT>,
+
+    _lock_file: LockFile,
 }
 
 /// An entry in the values file.
@@ -245,8 +248,11 @@ impl LevelHashIO {
 
         let file_name = format!("{}{}", index_name, Self::LEVEL_INDEX_EXT);
         let index_file = index_dir.join(&file_name);
+        let lock_file = index_dir.join(format!("{}.lock", &file_name));
         let meta_file = index_dir.join(format!("{}{}", &file_name, Self::LEVEL_META_EXT));
         let keymap_file = index_dir.join(format!("{}{}", &file_name, Self::LEVEL_KEYMAP_EXT));
+
+        let lock_file = LockFile::new(&lock_file)?;
 
         init_sparse_file(&index_file, Some(Self::VALUES_MAGIC_NUMBER))?;
         init_sparse_file(&keymap_file, Some(Self::KEYMAP_MAGIC_NUMBER))?;
@@ -271,6 +277,7 @@ impl LevelHashIO {
             keymap,
             meta,
             interim_lvl_addr: None,
+            _lock_file: lock_file,
         })
     }
 }

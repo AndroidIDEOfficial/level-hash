@@ -789,10 +789,10 @@ impl LevelHash {
 mod test {
     use std::assert_matches::assert_matches;
     use std::fs;
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::AsRawFd;
     use std::path::Path;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::sync::RwLock;
 
     use crate::io::IOEndianness;
     use crate::level_io::LevelHashIO;
@@ -800,6 +800,8 @@ mod test {
     use crate::level_io::ValuesEntry;
     use crate::meta::MetaIO;
     use crate::reprs::ValuesData;
+    use crate::result::LevelInitError;
+    use crate::result::LevelInitResult;
     use crate::result::LevelInsertionError;
     use crate::result::LevelUpdateError;
     use crate::size::SIZE_U64;
@@ -818,13 +820,13 @@ mod test {
         hasher.finish()
     }
 
-    fn create_level_hash(
+    fn create_level_hash_3(
         name: &str,
         create_new: bool,
         conf: impl Fn(&mut LevelHashOptions),
-    ) -> LevelHash {
-        let dir_path = &format!("target/tests/level-hash/index-{}", name);
-        let index_dir = Path::new(dir_path);
+    ) -> (LevelInitResult, String) {
+        let dir_path = format!("target/tests/level-hash/index-{}", name);
+        let index_dir = Path::new(&dir_path);
         if create_new && index_dir.exists() {
             fs::remove_dir_all(&index_dir).expect("Failed to delete existing directory");
         } else {
@@ -841,7 +843,24 @@ mod test {
 
         conf(&mut options);
 
-        options.build().expect("failed to create level hash")
+        (options.build(), dir_path)
+    }
+
+    fn create_level_hash_2(
+        name: &str,
+        create_new: bool,
+        conf: impl Fn(&mut LevelHashOptions),
+    ) -> (LevelHash, String) {
+        let (hash, dir) = create_level_hash_3(name, create_new, conf);
+        (hash.expect("failed to create level hash"), dir)
+    }
+
+    fn create_level_hash(
+        name: &str,
+        create_new: bool,
+        conf: impl Fn(&mut LevelHashOptions),
+    ) -> LevelHash {
+        create_level_hash_2(name, create_new, conf).0
     }
 
     fn default_level_hash(name: &str) -> LevelHash {
@@ -934,32 +953,36 @@ mod test {
 
     #[test]
     fn existing_level_init() {
-        let mut hash = default_level_hash("init-existing");
-        hash.insert(b"key", b"value").unwrap();
-        hash.insert(b"null", &[]).unwrap();
-        hash.insert(
-            b"long",
-            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        )
-        .unwrap();
+        {
+            let mut hash = default_level_hash("init-existing");
+            hash.insert(b"key", b"value").unwrap();
+            hash.insert(b"null", &[]).unwrap();
+            hash.insert(
+                b"long",
+                b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            )
+            .unwrap();
 
-        assert_eq!(hash.get_value(b"key"), b"value".to_vec());
-        assert_eq!(hash.get_value(b"null"), vec![]);
-        assert_eq!(
-            hash.get_value(b"long"),
-            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()
-        );
+            assert_eq!(hash.get_value(b"key"), b"value".to_vec());
+            assert_eq!(hash.get_value(b"null"), vec![]);
+            assert_eq!(
+                hash.get_value(b"long"),
+                b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()
+            );
+        }
 
-        let hash = create_level_hash("init-existing", false, |options| {
-            options.level_size(2).bucket_size(4).auto_expand(false);
-        });
+        {
+            let hash = create_level_hash("init-existing", false, |options| {
+                options.level_size(2).bucket_size(4).auto_expand(false);
+            });
 
-        assert_eq!(hash.get_value(b"key"), b"value".to_vec());
-        assert_eq!(hash.get_value(b"null"), vec![]);
-        assert_eq!(
-            hash.get_value(b"long"),
-            b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()
-        );
+            assert_eq!(hash.get_value(b"key"), b"value".to_vec());
+            assert_eq!(hash.get_value(b"null"), vec![]);
+            assert_eq!(
+                hash.get_value(b"long"),
+                b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_vec()
+            );
+        }
     }
 
     #[test]
@@ -1411,6 +1434,81 @@ mod test {
                     ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
                 format!("key{}", to_remove_idx + 1).as_bytes()
             );
+        }
+    }
+
+    #[test]
+    fn test_file_lock_is_acquired() {
+        let file_name = "check-file-lock-acquired";
+        let (_hash, dir) = create_level_hash_2(file_name, true, |_| {});
+        let lock_path = Path::new(&dir).join(&format!("{}.index.lock", file_name));
+        assert!(lock_path.exists());
+
+        let lock_file = File::options()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(lock_path)
+            .unwrap();
+
+        // assert that trying to acquire an exclusive lock on the lock file would block
+        assert_eq!(
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error().unwrap(),
+            libc::EWOULDBLOCK
+        );
+    }
+
+    #[test]
+    fn test_file_lock_is_released_on_drop() {
+        let file_name = "check-file-lock-released-on-drop";
+        let (hash, dir) = create_level_hash_2(file_name, true, |_| {});
+        let lock_path = Path::new(&dir).join(&format!("{}.index.lock", file_name));
+        assert!(lock_path.exists());
+
+        let lock_file = File::options()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(lock_path)
+            .unwrap();
+
+        assert_eq!(
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error().unwrap(),
+            libc::EWOULDBLOCK
+        );
+
+        drop(hash);
+
+        assert_eq!(
+            unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+    }
+
+    #[test]
+    fn test_level_hash_creation_fails_if_lock_acquired() {
+        let file_name = "check-level-fail-if-lock-acquired";
+        let (_hash, dir) = create_level_hash_2(file_name, true, |_| {});
+        let lock_path = Path::new(&dir).join(&format!("{}.index.lock", file_name));
+        assert!(lock_path.exists());
+
+        let (result, _) = create_level_hash_3(file_name, false, |_| {});
+        match result.err() {
+            Some(err) => match err {
+                LevelInitError::IOError(io) => {
+                    assert_eq!(io.error.raw_os_error().unwrap(), libc::EWOULDBLOCK);
+                }
+                _ => panic!("expected IO err"),
+            },
+            None => panic!("expected an error"),
         }
     }
 }

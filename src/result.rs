@@ -36,8 +36,8 @@ pub type LevelClearResult = LevelRemapResult;
 /// An I/O error in level hash.
 #[derive(Debug)]
 pub struct StdIOError {
-    message: Option<String>,
-    error: std::io::Error,
+    pub message: Option<String>,
+    pub error: std::io::Error,
 }
 
 impl StdIOError {

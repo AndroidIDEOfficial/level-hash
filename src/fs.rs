@@ -36,6 +36,46 @@ use crate::size::SIZE_U64;
 use crate::types::OffT;
 use crate::util::file_open_or_panic;
 
+#[derive(Debug)]
+pub(crate) struct LockFile {
+    _file: File,
+}
+
+impl LockFile {
+    /// Create a new lock file.
+    pub fn new(path: &Path) -> LevelResult<Self, LevelInitError> {
+        // we do not request blocking if the lock is already acquired
+        // in that case, this `open` call will fail
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create_new(!path.exists())
+            .open(path)
+            .into_lvl_io_e_msg(format!("failed to open lock file: {}", path.display()))
+            .into_lvl_init_err()?;
+
+        let result = __flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB);
+        if result != 0 {
+            // any other error returned by flock
+            return Err(LevelInitError::IOError(StdIOError::new(
+                Some(format!(
+                    "failed to acquire lock on lock file: {}",
+                    path.display()
+                )),
+                std::io::Error::last_os_error(),
+            )));
+        };
+
+        Ok(Self { _file: file })
+    }
+}
+
+impl Drop for LockFile {
+    fn drop(&mut self) {
+        __flock(self._file.as_raw_fd(), libc::LOCK_UN | libc::LOCK_NB);
+    }
+}
+
 pub(crate) fn init_sparse_file(
     path: &Path,
     magic_number: Option<u64>,
@@ -149,4 +189,9 @@ pub(crate) fn fallocate_safe_punch(fd: libc::c_int, offset: OffT, len: OffT) {
         offset,
         len,
     );
+}
+
+#[inline]
+fn __flock(fd: i32, operation: i32) -> i32 {
+    unsafe { libc::flock(fd, operation) }
 }
