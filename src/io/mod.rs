@@ -84,17 +84,19 @@ impl MappedFile {
     /// Create a new [MappedFile] from the given file. The region of the file from offset
     /// `off` to `off + size` will be mapped.
     pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
-        let map = Self::do_map(&fd, off)?;
+        let map = Self::do_map(&fd, off, size)?;
         Ok(Self { map, fd, off, size })
     }
 
     pub(crate) fn do_map(
         fd: &OwnedFd,
         off: OffT,
+        size: OffT,
     ) -> LevelResult<MmapMut, LevelMapError> {
         unsafe {
             MmapOptions::new()
                 .offset(off)
+                .len(size as usize)
                 .map_mut(fd.as_raw_fd())
         }
         .into_lvl_io_e_msg("failed to memory map file".to_string())
