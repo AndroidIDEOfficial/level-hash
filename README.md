@@ -6,19 +6,15 @@ the work of Pengfei Zuo, Yu Hua, and Jie Wu, Huazhong University of Science and 
 ## Limitations
 
 - Linux/Android only!
-- Supported architectures :
-  - `arm`
-  - `aarch64`
-  - `i686`
-  - `x86_64`
+- Only supported on `aarch64` and `x86_64`!
 
 ## Structure
 
 The peristent level hash is backed by three files :
 
 - `{name}.index._meta` - metadata for the level hash.
-- `{name}.index._keymap` - maps the hash of the slot position
-   (`hash(level_num, bucket_idx, slot_idx`) to the address of entry in the
+- `{name}.index._keymap` - maps the slot position
+   `level_num, bucket_idx, slot_idx` to the address of entry in the
    `${name}` file. This is known as the keymap.
 - `{name}.index` - Contains all the variable-length entry values of the level hash.
 

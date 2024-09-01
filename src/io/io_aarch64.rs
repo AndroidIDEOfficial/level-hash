@@ -15,9 +15,6 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#[cfg(not(target_feature = "neon"))]
-compile_error!("Required feature: neon");
-
 /// Check if the given memory regions are NOT equal using Neon instructions. Note that this may not
 /// check the whole memory region.
 ///
@@ -25,7 +22,6 @@ compile_error!("Required feature: neon");
 ///
 /// `true` if the memory regions are NOT equal, `false` otherwise. If `false` is returned, then the number of
 /// bytes that were compared is written to the `len_compared` parameter.
-#[target_feature(enable = "neon")]
 pub(crate) unsafe fn __memneq(
     lhs: *const u8,
     rhs: *const u8,

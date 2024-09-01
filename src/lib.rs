@@ -15,20 +15,13 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 #![feature(assert_matches)]
-#![cfg_attr(target_arch = "arm", feature(stdarch_arm_neon_intrinsics))]
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-compile_err!("This library only works on Linux/Android!");
-
-// Include the generated Rust bindings for libcpu_features
-// Needed only on armv7a as Neon support is optional on such machines
-// aarch64 is guaranteed to have Neon support
-#[cfg(target_arch = "arm")]
-include!(concat!(env!("OUT_DIR"), "/cpu_features.rs"));
+#[cfg(not(all(
+    any(target_arch = "aarch64", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "android")
+)))]
+compile_err!("This library only works on aarch64/x86_64 Linux/Android!");
 
 pub use level_hash::*;
 

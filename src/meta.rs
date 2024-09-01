@@ -64,6 +64,7 @@ pub(crate) struct MetaIO {
 }
 
 impl MetaIO {
+    #[allow(non_upper_case_globals)]
     pub const META__SIZE_BYTES: OffT = size_of::<LevelMeta>() as OffT;
 
     pub fn new(
@@ -92,8 +93,8 @@ impl MetaIO {
         let mut mmap =
             MappedFile::new(file.into(), 0, Self::META__SIZE_BYTES).into_lvl_init_err()?;
         let meta = LevelMetaPtr::new(mmap.map.as_mut_ptr() as *mut LevelMeta);
-        let mut metaIo = MetaIO { _file: mmap, meta };
-        let meta = metaIo.write();
+        let mut meta_io = MetaIO { _file: mmap, meta };
+        let meta = meta_io.write();
         if meta.val_version == 0 {
             meta.val_version = LEVEL_VALUES_VERSION;
         }
@@ -122,7 +123,7 @@ impl MetaIO {
             meta.km_l1_addr = addr;
         }
 
-        Ok(metaIo)
+        Ok(meta_io)
     }
 
     pub fn km_start_addr(&mut self) -> OffT {

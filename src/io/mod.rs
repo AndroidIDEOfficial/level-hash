@@ -21,19 +21,14 @@ pub(crate) mod io_android;
 #[cfg(target_os = "linux")]
 pub(crate) mod io_linux;
 
-#[cfg(target_arch = "arm")]
-pub(crate) mod io_arm;
-#[cfg(target_arch = "arm")]
-pub(crate) use io_arm::__memneq;
-
 #[cfg(all(target_arch = "aarch64"))]
 pub(crate) mod io_aarch64;
 #[cfg(all(target_arch = "aarch64"))]
 pub(crate) use io_aarch64::__memneq;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod io_x86;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) use io_x86::__memneq;
 
 use std::fs::File;
@@ -89,19 +84,17 @@ impl MappedFile {
     /// Create a new [MappedFile] from the given file. The region of the file from offset
     /// `off` to `off + size` will be mapped.
     pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
-        let map = Self::do_map(&fd, off, size)?;
+        let map = Self::do_map(&fd, off)?;
         Ok(Self { map, fd, off, size })
     }
 
     pub(crate) fn do_map(
         fd: &OwnedFd,
         off: OffT,
-        size: OffT,
     ) -> LevelResult<MmapMut, LevelMapError> {
         unsafe {
             MmapOptions::new()
                 .offset(off)
-                .len(size as usize)
                 .map_mut(fd.as_raw_fd())
         }
         .into_lvl_io_e_msg("failed to memory map file".to_string())

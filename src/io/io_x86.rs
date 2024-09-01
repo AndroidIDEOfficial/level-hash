@@ -30,11 +30,10 @@ pub(crate) unsafe fn __memneq(
 ) -> bool {
     #[cfg(target_feature = "sse2")]
     {
-        #[cfg(target_arch = "x86")]
-        use core::arch::x86::{__m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8};
-
-        #[cfg(target_arch = "x86_64")]
-        use std::arch::x86_64::{__m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8};
+        use std::arch::x86_64::__m128i;
+        use std::arch::x86_64::_mm_cmpeq_epi8;
+        use std::arch::x86_64::_mm_loadu_si128;
+        use std::arch::x86_64::_mm_movemask_epi8;
 
         let mut i = 0usize;
         while i + 16 <= len {
