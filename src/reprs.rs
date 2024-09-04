@@ -37,7 +37,7 @@ macro_rules! def_layout {
 
         paste::paste! {
             #[allow(dead_code)]
-            #[allow(non_upper_case_globals)]    
+            #[allow(non_upper_case_globals)]
             impl $name {
                 $(
                     pub const [<SIZE_ $prop_name>]: usize = size_of::<$prop_typ>();
