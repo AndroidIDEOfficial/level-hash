@@ -26,7 +26,7 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 
 use crate::io::IOEndianness;
-use crate::log::loge;
+use crate::log_macros::log_error;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
 use crate::result::LevelInitError;
@@ -104,8 +104,8 @@ pub(crate) fn init_sparse_file(
             match file.read_u64::<IOEndianness>() {
                 Ok(magic_f) => {
                     if magic_f != magic {
-                        loge(&format!("magic number mismatch: {} != {}", magic_f, magic));
-                        loge(&format!("removing {}", path.display()));
+                        log_error!("magic number mismatch: {} != {}", magic_f, magic);
+                        log_error!("removing {}", path.display());
                         file.set_len(0)
                             .into_lvl_io_e_msg("couldn't truncate file".to_string())?;
                         write_magic_file(&mut file, Some(magic))?;
