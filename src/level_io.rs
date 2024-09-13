@@ -28,6 +28,7 @@ use crate::reprs::ValuesData;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
 use crate::result::IntoLevelInsertionErr;
+use crate::result::IntoLevelUpdateErr;
 use crate::result::LevelClearResult;
 use crate::result::LevelInitError;
 use crate::result::LevelInsertionError;
@@ -433,47 +434,29 @@ impl LevelHashIO {
         slot: _SlotIdxT,
         new_value: &LevelValueT,
     ) -> LevelUpdateResult {
-        let slot_addr = self.slot_addr(level, bucket, slot);
-        let val_addr = self.km_read_addr(slot_addr);
-        if val_addr == Self::POS_INVALID {
+        // IMP: Update slot_addr only after writing the new value entry
+        
+        let (slot_addr, val_addr) = self.slot_and_val_addr_at(level, bucket, slot);
+        if val_addr.is_none() {
             return Err(LevelUpdateError::SlotEmpty);
         }
 
-        let mut entry = ValuesEntryMut::at(val_addr - 1, &mut self.values);
-        if entry.is_empty() {
+        let val_addr = val_addr.unwrap();
+        let this_entry = ValuesEntry::at(val_addr - 1, &mut self.values);
+        if this_entry.is_empty() {
             return Err(LevelUpdateError::EntryNotOccupied);
         }
 
-        let key_size = entry.key_size() as OffT;
-        let (val_size, val) = entry.val_with_size(&self.values);
-        let new_val_size = new_value.len() as u32;
+        let key = this_entry.key(&self.values);
+        let value = this_entry.value(&self.values);
+        let esize = this_entry.esize();
 
-        if val_size < new_val_size {
-            // the existing entry cannot be used as it is too small,
-            // so we need to re-allocate a new entry with appropriate size
-            let key = entry.key(&mut self.values);
-            return self
-                .append_entry_at_slot(slot_addr, &key, new_value)
-                .map(|_| val)
-                .map_err(|e| LevelUpdateError::from(e));
-        }
+        self.append_entry_at_slot(slot_addr, &key, new_value)
+            .into_lvl_upd_err()?;
 
-        let entry_data = entry.data_mut();
-        entry_data.value_size = new_val_size;
+        self.val_deallocate(this_entry.addr, esize);
 
-        let value_offset = entry.addr + ValuesEntry::OFF_KEY + key_size;
-        if new_val_size > 0 {
-            self.values.write_at(value_offset, new_value);
-        }
-
-        if new_val_size < val_size {
-            // the new value is smaller than the old value,
-            // so we need to deallocate the extra space
-            let offset = value_offset + new_val_size as OffT;
-            self.val_deallocate(offset, (val_size - new_val_size) as OffT);
-        }
-
-        Ok(val)
+        Ok(value)
     }
 
     /// Create a new entry or update the existing entry at the given slot position. If the given
@@ -536,12 +519,6 @@ impl LevelHashIO {
             this_entry.is_empty(),
             "addr pointed by meta.next_entry is already occupied"
         );
-
-        // if !this_entry.is_empty() {
-        //     // entry_size > 0
-        //     // entry is occupied
-        //     return Err(LevelInsertionError::DuplicateKey);
-        // }
 
         let this_data = this_entry.data_mut();
 
