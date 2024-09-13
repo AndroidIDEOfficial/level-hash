@@ -107,6 +107,10 @@ impl MetaIO {
             meta.val_file_size = VALUES_FILE_SIZE_DEFAULT;
         }
 
+        if meta.val_next_addr == 0 {
+            meta.val_next_addr = 1;
+        }
+
         if meta.km_level_size == 0 {
             meta.km_level_size = level_size;
         }
@@ -178,8 +182,8 @@ mod tests {
         let meta = io.read();
         assert_eq!(meta.val_version, LEVEL_VALUES_VERSION);
         assert_eq!(meta.km_version, LEVEL_KEYMAP_VERSION);
-        assert_eq!(meta.val_head_addr, 0);
         assert_eq!(meta.val_tail_addr, 0);
+        assert_eq!(meta.val_next_addr, 1);
         assert_eq!(meta.val_file_size, VALUES_FILE_SIZE_DEFAULT);
         assert_eq!(meta.km_level_size, LEVEL_SIZE_DEFAULT);
         assert_eq!(meta.km_bucket_size, BUCKET_SIZE_DEFAULT);
@@ -199,7 +203,7 @@ mod tests {
             let meta = io.write();
             meta.val_version = 2;
             meta.km_version = 3;
-            meta.val_head_addr = 200;
+            meta.val_next_addr = 200;
             meta.val_tail_addr = 300;
             meta.val_file_size = 1024;
             meta.km_level_size = 10;
@@ -211,7 +215,7 @@ mod tests {
             let meta = io.read();
             assert_eq!(meta.val_version, 2);
             assert_eq!(meta.km_version, 3);
-            assert_eq!(meta.val_head_addr, 200);
+            assert_eq!(meta.val_next_addr, 200);
             assert_eq!(meta.val_tail_addr, 300);
             assert_eq!(meta.val_file_size, 1024);
             assert_eq!(meta.km_level_size, 10);

@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use std::hash::Hasher;
 use gxhash::GxHasher;
 use level_hash::{util::generate_seeds, LevelHash};
+use std::hash::Hasher;
 
 fn gxhash(seed: u64, data: &[u8]) -> u64 {
     let mut hasher = GxHasher::with_seed(seed as i64);
@@ -26,12 +26,9 @@ fn main() {
 
     let start = std::time::Instant::now();
     for i in 0..1_000_000 {
-        assert!(hash
-            .insert(
-                format!("longlonglongkey{}", i).as_bytes(),
-                format!("longlonglongvalue{}", i).as_bytes()
-            )
-            .is_ok());
+        let kv = format!("longlonglongkey{}", i).into_bytes();
+        hash.insert(&kv, &kv)
+            .expect(&format!("failed to insert: {:?}", &kv));
     }
     let end = std::time::Instant::now();
     let duration = end.duration_since(start).as_millis();

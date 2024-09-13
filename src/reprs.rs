@@ -70,8 +70,8 @@ def_layout!(
     struct LevelMeta {
         val_version: u32,
         km_version: u32,
-        val_head_addr: OffT,
         val_tail_addr: OffT,
+        val_next_addr: OffT,
         val_file_size: OffT,
         km_level_size: LevelSizeT,
         km_bucket_size: BucketSizeT,
@@ -82,10 +82,20 @@ def_layout!(
 
 def_layout!(
     struct ValuesData {
-        entry_size: u64,
-        prev_entry: OffT,
-        next_entry: OffT,
+        // we store the key_size and value_size sequentially
+        // so that we don't need to store an extra field 'entry_size' as
+        // it can be calculated by adding the value of the below two fields
+        // to the size of the fields itself (4 + 4)
+        //
+        // For example, for key=key1 and value=value1
+        // len(key) = 4
+        // len(value) = 6
+        // sizeof(key_size) = 4
+        // sizeof(value_size) = 4
+        // entry_size = 4 + 6 + 4 + 4 = 18 bytes
         key_size: u32,
         value_size: u32,
+        // key_size bytes of key
+        // value_size bytes of value
     }
 );

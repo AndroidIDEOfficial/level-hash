@@ -58,6 +58,7 @@ pub fn generate_seeds() -> (u64, u64) {
     (fseed, sseed)
 }
 
+#[inline]
 pub(crate) fn align_8(addr: OffT) -> OffT {
     (addr + 7) & !7
 }

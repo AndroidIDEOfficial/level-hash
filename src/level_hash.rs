@@ -333,7 +333,7 @@ impl LevelHash {
 
     fn buck_idx_cap(key_hash: u64, capacity: u64) -> u32 {
         // since capacity is a power of two and key hash is unsigned
-        // keyHash % capacity can be simplified with simple bit shift operation
+        // keyHash % capacity can be simplified with simple bitwise operation
         return (key_hash & (capacity - 1)) as u32;
     }
 
@@ -798,7 +798,6 @@ mod test {
     use crate::level_io::LevelHashIO;
     use crate::level_io::ValEntryReadExt;
     use crate::level_io::ValuesEntry;
-    use crate::meta::MetaIO;
     use crate::reprs::ValuesData;
     use crate::result::LevelInitError;
     use crate::result::LevelInitResult;
@@ -1103,337 +1102,29 @@ mod test {
             LevelHashIO::VALUES_MAGIC_NUMBER
         );
 
-        let mut pos = SIZE_U64; // magic number
+        let pos = SIZE_U64; // magic number
         let input = &mut input[pos as usize..];
 
-        let mut prev_entry = 0;
+        // since no entries are removed here, values should be laid out sequentially in the file
+        let mut pos = 0;
         for i in 0..10 {
-            let p = pos - SIZE_U64; // magic number len
-            let data = unsafe { &*(input[p as usize..].as_ptr() as *const ValuesData) };
+            let data = unsafe { &*(input.as_ptr().add(pos as usize) as *const ValuesData) };
 
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(data.prev_entry, prev_entry);
-            assert_eq!(data.next_entry, align_8(p + entry_size) + 1);
             assert_eq!(data.key_size, 4);
             assert_eq!(data.value_size, 6);
             assert_eq!(
-                &input[(p + ValuesEntry::OFF_KEY) as usize
-                    ..(p + ValuesEntry::OFF_KEY + data.key_size as u64) as usize],
+                &input[(pos + ValuesEntry::OFF_KEY) as usize
+                    ..(pos + ValuesEntry::OFF_KEY + data.key_size as u64) as usize],
                 format!("key{}", i).as_bytes()
             );
             assert_eq!(
-                &input[(p + ValuesEntry::OFF_KEY + data.key_size as u64) as usize
-                    ..(p + ValuesEntry::OFF_KEY + data.key_size as u64 + data.value_size as u64)
+                &input[(pos + ValuesEntry::OFF_KEY + data.key_size as u64) as usize
+                    ..(pos + ValuesEntry::OFF_KEY + data.key_size as u64 + data.value_size as u64)
                         as usize],
                 format!("value{}", i).as_bytes()
             );
 
-            prev_entry = p + 1;
-            pos = align_8(p + entry_size) + SIZE_U64; // + magic number len
-        }
-    }
-
-    #[test]
-    fn values_file_binary_repr_when_head_is_removed() {
-        let file_name = "values-binary-repr-rem-head";
-        let mut hash = create_level_hash(file_name, true, |options| {
-            options.auto_expand(false);
-        });
-
-        // min_size + "key1".len() + "value1".len()
-        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
-        let count = 10;
-
-        for i in 0..count {
-            let key = format!("key{}", i).as_bytes().to_vec();
-            let value = format!("value{}", i).as_bytes().to_vec();
-            assert!(hash.insert(&key, &value).is_ok());
-        }
-
-        let index_file = format!(
-            "target/tests/level-hash/index-{}/{}.index",
-            file_name, file_name
-        );
-        let meta_file = format!(
-            "target/tests/level-hash/index-{}/{}.index._meta",
-            file_name, file_name
-        );
-
-        let val_bytes = fs::read(&index_file).expect("Unable to read index file");
-        let input = val_bytes.as_slice();
-        {
-            let meta = hash.io.meta.read();
-            let meta_io = MetaIO::new(
-                Path::new(&meta_file),
-                meta.km_level_size,
-                meta.km_bucket_size,
-            )
-            .expect("failed to create meta file");
-
-            let meta = meta_io.read();
-            assert_eq!(meta.val_head_addr, 1);
-            assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 1)) + 1);
-        };
-
-        assert_eq!(
-            IOEndianness::read_u64(input),
-            LevelHashIO::VALUES_MAGIC_NUMBER
-        );
-
-        let pos = SIZE_U64; // magic number
-        let input = &input[pos as usize..];
-
-        let data = unsafe { &*(input.as_ptr() as *mut ValuesData) };
-        assert_eq!(data.entry_size, entry_size);
-        assert_eq!(data.prev_entry, 0);
-        assert_eq!(data.next_entry, align_8(entry_size) + 1);
-    }
-
-    #[test]
-    fn values_file_binary_repr_when_tail_is_removed() {
-        let file_name = "values-binary-repr-rem-tail";
-        let mut hash = create_level_hash(file_name, true, |options| {
-            options.auto_expand(false);
-        });
-
-        // min_size + "key1".len() + "value1".len()
-        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
-        let count = 10;
-
-        for i in 0..count {
-            let key = format!("key{}", i).as_bytes().to_vec();
-            let value = format!("value{}", i).as_bytes().to_vec();
-            assert!(hash.insert(&key, &value).is_ok());
-        }
-
-        let index_file = &format!(
-            "target/tests/level-hash/index-{}/{}.index",
-            file_name, file_name
-        );
-        let meta_file = &format!(
-            "target/tests/level-hash/index-{}/{}.index._meta",
-            file_name, file_name
-        );
-
-        {
-            let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let input = val_bytes.as_slice();
-
-            {
-                let meta = hash.io.meta.read();
-                let meta_io = MetaIO::new(
-                    Path::new(&meta_file),
-                    meta.km_level_size,
-                    meta.km_bucket_size,
-                )
-                .expect("failed to create meta file");
-
-                let meta = meta_io.read();
-                assert_eq!(meta.val_head_addr, 1);
-                assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 1)) + 1);
-            };
-
-            assert_eq!(
-                IOEndianness::read_u64(input),
-                LevelHashIO::VALUES_MAGIC_NUMBER
-            );
-
-            let pos = SIZE_U64; // magic number
-            let input = &input[pos as usize..];
-
-            let pos = (align_8(entry_size) * (count - 1)) as usize;
-            let data = unsafe { &*(input[pos as usize..].as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(data.prev_entry, (align_8(entry_size) * (count - 2)) + 1);
-            assert_eq!(data.next_entry, (align_8(entry_size) * count) + 1);
-        }
-
-        assert_eq!(
-            hash.remove(&format!("key{}", count - 1).as_bytes()),
-            Some(format!("value{}", count - 1).as_bytes().to_vec())
-        );
-
-        {
-            let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let input = val_bytes.as_slice();
-
-            {
-                let meta = hash.io.meta.read();
-                let meta_io = MetaIO::new(
-                    Path::new(&meta_file),
-                    meta.km_level_size,
-                    meta.km_bucket_size,
-                )
-                .expect("failed to create meta file");
-
-                let meta = meta_io.read();
-                assert_eq!(meta.val_head_addr, 1);
-                assert_eq!(meta.val_tail_addr, (align_8(entry_size) * (count - 2)) + 1);
-            };
-
-            assert_eq!(
-                IOEndianness::read_u64(input),
-                LevelHashIO::VALUES_MAGIC_NUMBER
-            );
-
-            let pos = SIZE_U64 as usize + (align_8(entry_size) * (count - 1)) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, 0);
-
-            let pos = SIZE_U64 as usize + (align_8(entry_size) * (count - 2)) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(data.prev_entry, (align_8(entry_size) * (count - 3)) + 1);
-            assert_eq!(data.next_entry, (align_8(entry_size) * (count - 1)) + 1);
-        }
-    }
-
-    #[test]
-    fn values_file_binary_repr_when_entry_is_removed_in_the_middle() {
-        let file_name = "values-binary-repr-rem-tail";
-        let mut hash = create_level_hash(file_name, true, |options| {
-            options.auto_expand(false);
-        });
-
-        // min_size + "key1".len() + "value1".len()
-        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + 4 + 6;
-        let entry_size_aligned = align_8(entry_size);
-        let count = 10;
-
-        for i in 0..count {
-            let key = format!("key{}", i).as_bytes().to_vec();
-            let value = format!("value{}", i).as_bytes().to_vec();
-            assert!(hash.insert(&key, &value).is_ok());
-        }
-
-        let index_file = &format!(
-            "target/tests/level-hash/index-{}/{}.index",
-            file_name, file_name
-        );
-        let meta_file = &format!(
-            "target/tests/level-hash/index-{}/{}.index._meta",
-            file_name, file_name
-        );
-
-        // let to_remove_idx = rand::thread_rng().gen_range(2..count - 2);
-        let to_remove_idx = 5;
-
-        {
-            let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let input = val_bytes.as_slice();
-            {
-                let meta = hash.io.meta.read();
-                let meta_io = MetaIO::new(
-                    Path::new(&meta_file),
-                    meta.km_level_size,
-                    meta.km_bucket_size,
-                )
-                .expect("failed to create meta file");
-
-                let meta = meta_io.read();
-                assert_eq!(meta.val_head_addr, 1);
-                assert_eq!(meta.val_tail_addr, (entry_size_aligned * (count - 1)) + 1);
-            };
-
-            assert_eq!(
-                IOEndianness::read_u64(input),
-                LevelHashIO::VALUES_MAGIC_NUMBER
-            );
-
-            let pos = SIZE_U64 as usize + (entry_size_aligned * to_remove_idx) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(
-                data.prev_entry,
-                (entry_size_aligned * (to_remove_idx - 1)) + 1
-            );
-            assert_eq!(
-                data.next_entry,
-                (entry_size_aligned * (to_remove_idx + 1)) + 1
-            );
-            assert_eq!(data.key_size, 4);
-
-            assert_eq!(
-                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
-                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
-                format!("key{}", to_remove_idx).as_bytes()
-            );
-        }
-
-        hash.remove(&format!("key{}", to_remove_idx).as_bytes());
-
-        {
-            let val_bytes = fs::read(index_file).expect("Unable to read index file");
-            let input = val_bytes.as_slice();
-            {
-                let meta = hash.io.meta.read();
-                let meta_io = MetaIO::new(
-                    Path::new(&meta_file),
-                    meta.km_level_size,
-                    meta.km_bucket_size,
-                )
-                .expect("failed to create meta file");
-
-                let meta = meta_io.read();
-                assert_eq!(meta.val_head_addr, 1);
-                assert_eq!(
-                    meta.val_tail_addr,
-                    (entry_size_aligned * (count - 1)) as u64 + 1
-                );
-            };
-
-            assert_eq!(
-                IOEndianness::read_u64(input),
-                LevelHashIO::VALUES_MAGIC_NUMBER
-            );
-
-            let pos = SIZE_U64 as usize + (entry_size_aligned * to_remove_idx) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, 0);
-
-            let pos = SIZE_U64 as usize + (entry_size_aligned * (to_remove_idx - 1)) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(
-                data.prev_entry,
-                (entry_size_aligned * (to_remove_idx - 2)) + 1
-            );
-            assert_eq!(
-                data.next_entry,
-                (entry_size_aligned * (to_remove_idx + 1)) + 1
-            );
-            assert_eq!(data.key_size, 4);
-
-            assert_eq!(
-                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
-                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
-                format!("key{}", to_remove_idx - 1).as_bytes()
-            );
-
-            let pos = SIZE_U64 as usize + (entry_size_aligned * (to_remove_idx + 1)) as usize;
-            let input = &val_bytes[pos..];
-            let data = unsafe { &*(input.as_ptr() as *const ValuesData) };
-            assert_eq!(data.entry_size, entry_size);
-            assert_eq!(
-                data.prev_entry,
-                (entry_size_aligned * (to_remove_idx - 1)) + 1
-            );
-            assert_eq!(
-                data.next_entry,
-                (entry_size_aligned * (to_remove_idx + 2)) + 1
-            );
-            assert_eq!(data.key_size, 4);
-
-            assert_eq!(
-                &val_bytes[(pos + ValuesEntry::OFF_KEY as usize)
-                    ..(pos + ValuesEntry::OFF_KEY as usize + data.key_size as usize)],
-                format!("key{}", to_remove_idx + 1).as_bytes()
-            );
+            pos = align_8(pos + entry_size); // + magic number len
         }
     }
 

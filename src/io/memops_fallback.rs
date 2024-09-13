@@ -15,17 +15,10 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-use crate::io::MappedFile;
-use crate::result::{LevelMapError, LevelResult};
-use crate::types::OffT;
+pub unsafe fn __memeq(lhs: *const u8, rhs: *const u8, len: usize) -> bool {
+    libc::memcmp(lhs as *const libc::c_void, rhs as *const libc::c_void, len) == 0
+}
 
-impl MappedFile {
-    pub(crate) fn remap(&mut self, size: OffT) -> LevelResult<(), LevelMapError> {
-        // reassigning drops the previous mmap which unmaps the file
-        // then we map the file again with the new size
-        self.map = MappedFile::do_map(&self.fd, self.off, size)?;
-        self.size = size;
-
-        Ok(())
-    }
+pub unsafe fn __memcpy(dst: *mut u8, src: *const u8, len: usize) {
+    libc::memcpy(dst as *mut libc::c_void, src as *const libc::c_void, len);
 }

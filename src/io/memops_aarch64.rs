@@ -15,19 +15,12 @@
  *   along with AndroidIDE.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/// Check if the given memory regions are NOT equal using Neon instructions. Note that this may not
-/// check the whole memory region.
+/// Check if the given memory regions are equal using Neon instructions.
 ///
 /// ## Returns
 ///
-/// `true` if the memory regions are NOT equal, `false` otherwise. If `false` is returned, then the number of
-/// bytes that were compared is written to the `len_compared` parameter.
-pub(crate) unsafe fn __memneq(
-    lhs: *const u8,
-    rhs: *const u8,
-    len_compared: &mut usize,
-    len: usize,
-) -> bool {
+/// `true` if the memory regions are equal, `false` otherwise.
+pub unsafe fn __memeq(lhs: *const u8, rhs: *const u8, len: usize) -> bool {
     use std::arch::aarch64::vceqq_u8;
     use std::arch::aarch64::vld1q_u8;
     use std::arch::aarch64::vminvq_u8;
@@ -37,12 +30,25 @@ pub(crate) unsafe fn __memneq(
         let lchunk = vld1q_u8(lhs.add(i));
         let rchunk = vld1q_u8(rhs.add(i));
         let cmp = vceqq_u8(lchunk, rchunk);
-        if vminvq_u8(cmp) != 0xFF {
-            return true;
+        if vminvq_u8(cmp) == 0xFF {
+            return false;
         }
         i += 16;
     }
+    return true;
+}
 
-    *len_compared = i;
-    return false;
+pub unsafe fn __memcpy(dst: *mut u8, src: *const u8, len: usize) {
+    let mut i = 0;
+
+    while i + 16 <= len {
+        let src_chunk = std::arch::aarch64::vld1q_u8(src.add(i) as *const u8);
+        std::arch::aarch64::vst1q_u8(dst.add(i) as *mut u8, src_chunk);
+        i += 16;
+    }
+
+    while i < len {
+        *dst.add(i) = *src.add(i);
+        i += 1;
+    }
 }

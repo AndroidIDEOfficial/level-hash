@@ -31,10 +31,14 @@ cmake = "0.1.50"
 crate-type = ["rlib", "dylib"]
 
 [profile.release]
+lto = true
 strip = true
 
 [profile.release-with-debug]
 inherits = "release"
+lto = true
+strip = false
+debug = true
 
 [[bench]]
 name = "level_benchmarks"

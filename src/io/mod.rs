@@ -16,20 +16,27 @@
  */
 
 #[cfg(target_os = "android")]
-pub(crate) mod io_android;
+#[path = "mmap_android.rs"]
+pub mod mmap;
 
 #[cfg(target_os = "linux")]
-pub(crate) mod io_linux;
+#[path = "mmap_linux.rs"]
+pub mod mmap;
 
-#[cfg(all(target_arch = "aarch64"))]
-pub(crate) mod io_aarch64;
-#[cfg(all(target_arch = "aarch64"))]
-pub(crate) use io_aarch64::__memneq;
+#[cfg(target_arch = "aarch64")]
+#[path = "memops_aarch64.rs"]
+pub mod memops;
 
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod io_x86;
-#[cfg(target_arch = "x86_64")]
-pub(crate) use io_x86::__memneq;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[path = "memops_x86.rs"]
+pub mod memops;
+
+#[cfg(not(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64"
+)))]
+#[path = "memops_fallback.rs"]
+pub mod memops;
 
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -41,12 +48,10 @@ use memmap2::MmapMut;
 use memmap2::MmapOptions;
 
 use crate::fs::fallocate_safe_punch;
-use crate::io;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelMapErr;
 use crate::result::LevelMapError;
 use crate::result::LevelResult;
-use crate::size::SIZE_U32;
 use crate::size::SIZE_U64;
 use crate::types::OffT;
 
@@ -54,23 +59,19 @@ pub type IOEndianness = byteorder::NativeEndian;
 
 /// A memory-mapped file.
 #[derive(Debug)]
-pub(crate) struct MappedFile {
-    pub(crate) map: MmapMut,
-    pub(crate) fd: OwnedFd,
+pub struct MappedFile {
+    pub map: MmapMut,
+    pub fd: OwnedFd,
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
-    pub(crate) off: OffT,
-    pub(crate) size: OffT,
+    pub off: OffT,
+    pub size: OffT,
 }
 
 impl MappedFile {
     /// Create a new [MappedFile] from the given file path. The region of the file from
     /// offset `off` to `off + size` will be mapped.
-    pub(crate) fn from_path(
-        path: &Path,
-        off: OffT,
-        size: OffT,
-    ) -> LevelResult<Self, LevelMapError> {
+    pub fn from_path(path: &Path, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
         let file = File::options()
             .read(true)
             .write(true)
@@ -83,16 +84,12 @@ impl MappedFile {
 
     /// Create a new [MappedFile] from the given file. The region of the file from offset
     /// `off` to `off + size` will be mapped.
-    pub(crate) fn new(fd: OwnedFd, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
+    pub fn new(fd: OwnedFd, off: OffT, size: OffT) -> LevelResult<Self, LevelMapError> {
         let map = Self::do_map(&fd, off, size)?;
         Ok(Self { map, fd, off, size })
     }
 
-    pub(crate) fn do_map(
-        fd: &OwnedFd,
-        off: OffT,
-        size: OffT,
-    ) -> LevelResult<MmapMut, LevelMapError> {
+    pub fn do_map(fd: &OwnedFd, off: OffT, size: OffT) -> LevelResult<MmapMut, LevelMapError> {
         unsafe {
             MmapOptions::new()
                 .offset(off)
@@ -103,7 +100,7 @@ impl MappedFile {
         .into_lvl_mmap_err()
     }
 
-    pub(crate) fn memeq(&self, offset: OffT, arr: &[u8]) -> bool {
+    pub fn memeq(&self, offset: OffT, arr: &[u8]) -> bool {
         let len = arr.len();
         if len == 0 || offset + len as u64 > self.size {
             return false;
@@ -112,46 +109,38 @@ impl MappedFile {
         unsafe {
             let lhs = self.map.as_ptr().add(offset as usize);
             let rhs = arr.as_ptr();
-
-            __memeq(lhs, rhs, len)
+            self::memops::__memeq(lhs, rhs, len)
         }
     }
 
     #[inline]
-    pub(crate) fn deallocate(&mut self, offset: OffT, len: OffT) {
+    pub fn deallocate(&mut self, offset: OffT, len: OffT) {
         fallocate_safe_punch(self.fd.as_raw_fd(), offset, len)
     }
 
-    pub(crate) fn read_at(&self, off: OffT, dst: &mut [u8]) {
+    pub fn read_at(&self, off: OffT, dst: &mut [u8]) {
         let pos = off as usize;
         let size = self.size as usize;
         let len = dst.len();
         assert!(pos + len <= size);
-        unsafe { io::__memcpy(dst.as_mut_ptr(), self.map[pos..pos + len].as_ptr(), len) }
+        unsafe { self::memops::__memcpy(dst.as_mut_ptr(), self.map[pos..pos + len].as_ptr(), len) }
     }
 
-    /// Copy the bytes for the given byte array into the memory mapped file.
-    pub(crate) fn write_at(&mut self, off: OffT, src: &[u8]) {
+    pub fn write_at(&mut self, off: OffT, src: &[u8]) {
         let pos = off as usize;
         let size = self.size as usize;
         let len = src.len();
         assert!(pos + len <= size);
-        unsafe { io::__memcpy(self.map[pos..pos + len].as_mut_ptr(), src.as_ptr(), len) }
+        unsafe { self::memops::__memcpy(self.map[pos..pos + len].as_mut_ptr(), src.as_ptr(), len) }
     }
 
-    pub(crate) fn r_u32(&self, off: OffT) -> u32 {
-        assert!(off + SIZE_U32 <= self.size);
-        let pos = off as usize;
-        IOEndianness::read_u32(&self.map[pos..pos + SIZE_U32 as usize])
-    }
-
-    pub(crate) fn r_u64(&self, off: OffT) -> u64 {
+    pub fn r_u64(&self, off: OffT) -> u64 {
         assert!(off + SIZE_U64 <= self.size);
         let pos = off as usize;
         IOEndianness::read_u64(&self.map[pos..pos + SIZE_U64 as usize])
     }
 
-    pub(crate) fn w_u64(&mut self, off: OffT, value: u64) {
+    pub fn w_u64(&mut self, off: OffT, value: u64) {
         assert!(off + SIZE_U64 <= self.size);
         let pos = off as usize;
         IOEndianness::write_u64(&mut self.map[pos..pos + SIZE_U64 as usize], value);
@@ -161,42 +150,5 @@ impl MappedFile {
 impl Drop for MappedFile {
     fn drop(&mut self) {
         self.map.flush().expect("failed to flush memory map");
-    }
-}
-
-/// Compare `len` bytes of data from `lhs` with `len` bytes of data from `rhs`.
-pub(crate) unsafe fn __memeq(lhs: *const u8, rhs: *const u8, len: usize) -> bool {
-    if len < 16 {
-        // don't bother
-        return libc::memcmp(lhs as *const libc::c_void, rhs as *const libc::c_void, len) == 0;
-    }
-
-    // Use SIMD instructions for bulk comparison
-    let mut i = 0;
-
-    if __memneq(lhs, rhs, &mut i, len) {
-        // not equal
-        return false;
-    }
-
-    // Compare the remaining bytes
-    if i < len {
-        let remaining = len - i;
-        let lhs_ptr = lhs.add(i);
-        let rhs_ptr = rhs.add(i);
-        return libc::memcmp(
-            lhs_ptr as *const libc::c_void,
-            rhs_ptr as *const libc::c_void,
-            remaining,
-        ) == 0;
-    }
-
-    true
-}
-
-/// Copy `len` bytes of data into `dst` from `src`.
-pub(crate) unsafe fn __memcpy(dst: *mut u8, src: *const u8, len: usize) {
-    unsafe {
-        libc::memcpy(dst as *mut libc::c_void, src as *const libc::c_void, len);
     }
 }
