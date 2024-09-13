@@ -22,6 +22,7 @@ use crate::level_io::LevelHashIO;
 use crate::level_io::ValEntryReadExt;
 use crate::level_io::ValuesEntry;
 use crate::result::IntoLevelExpErr;
+use crate::result::IntoLevelInsertionErr;
 use crate::result::LevelClearResult;
 use crate::result::LevelExpansionError;
 use crate::result::LevelExpansionResult;
@@ -572,11 +573,8 @@ impl LevelHash {
     ///
     /// `true` if the value was inserted successfully, `false` otherwise.
     pub fn insert(&mut self, key: &LevelKeyT, value: &LevelValueT) -> LevelInsertionResult {
-        if self.load_factor() >= self.load_factor_threshold
-            && self.auto_expand
-            && self.expand().is_err()
-        {
-            return Err(LevelInsertionError::ExpansionFailure);
+        if self.load_factor() >= self.load_factor_threshold && self.auto_expand {
+            self.expand().into_lvl_ins_err()?;
         }
 
         if self.load_factor() >= 1f32 {

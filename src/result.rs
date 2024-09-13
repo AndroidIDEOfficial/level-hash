@@ -85,7 +85,7 @@ pub enum LevelInsertionError {
     DuplicateKey,
 
     /// Occurs when the auto-expand fails.
-    ExpansionFailure,
+    ExpansionFailure(Box<LevelExpansionError>),
 
     /// Occurs when the level hash is full.
     LevelOverflow,
@@ -132,7 +132,7 @@ pub enum LevelExpansionError {
 
     /// Occurs when trying to expand the level hash while another hash-level operation is in progress.
     /// This hash-level operation can be another expand operation or the clear operation.
-    ConcurrentModificationError
+    ConcurrentModificationError,
 }
 
 /// Error occured during memory-mapping a file.
@@ -209,6 +209,12 @@ impl<T> IntoLevelMapErr<T> for LevelResult<T, StdIOError> {
 impl<T> IntoLevelExpErr<T> for LevelResult<T, LevelMapError> {
     fn into_lvl_exp_err(self) -> LevelResult<T, LevelExpansionError> {
         self.map_err(|e| LevelExpansionError::from(e))
+    }
+}
+
+impl<T> IntoLevelInsertionErr<T> for LevelResult<T, LevelExpansionError> {
+    fn into_lvl_ins_err(self) -> LevelResult<T, LevelInsertionError> {
+        self.map_err(|e| LevelInsertionError::ExpansionFailure(Box::new(e)))
     }
 }
 
