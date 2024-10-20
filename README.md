@@ -3,6 +3,10 @@
 Level Hash is write-optimized and high-performance hashing index scheme for persistent memory, based on
 the work of Pengfei Zuo, Yu Hua, and Jie Wu, Huazhong University of Science and Technology.
 
+> [!WARNING]
+> 
+> This project is not maintained anymore.
+
 ## Limitations
 
 - Linux/Android only!
