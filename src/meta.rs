@@ -23,7 +23,6 @@ use crate::io::MappedFile;
 use crate::level_io::LevelHashIO;
 use crate::level_io::LEVEL_KEYMAP_VERSION;
 use crate::level_io::LEVEL_VALUES_VERSION;
-use crate::level_io::VALUES_FILE_SIZE_DEFAULT;
 use crate::reprs::LevelMeta;
 use crate::result::IntoLevelIOErr;
 use crate::result::IntoLevelInitErr;
@@ -103,10 +102,6 @@ impl MetaIO {
             meta.km_version = LEVEL_KEYMAP_VERSION;
         }
 
-        if meta.val_file_size == 0 {
-            meta.val_file_size = VALUES_FILE_SIZE_DEFAULT;
-        }
-
         if meta.val_next_addr == 0 {
             meta.val_next_addr = 1;
         }
@@ -184,7 +179,7 @@ mod tests {
         assert_eq!(meta.km_version, LEVEL_KEYMAP_VERSION);
         assert_eq!(meta.val_tail_addr, 0);
         assert_eq!(meta.val_next_addr, 1);
-        assert_eq!(meta.val_file_size, VALUES_FILE_SIZE_DEFAULT);
+        assert_eq!(meta.val_file_size, 0); // this is set by LevelHashIO
         assert_eq!(meta.km_level_size, LEVEL_SIZE_DEFAULT);
         assert_eq!(meta.km_bucket_size, BUCKET_SIZE_DEFAULT);
         assert_eq!(meta.km_l0_addr, 0);

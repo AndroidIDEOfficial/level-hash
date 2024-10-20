@@ -1200,4 +1200,23 @@ mod test {
             None => panic!("expected an error"),
         }
     }
+
+    #[test]
+    fn test_entry_size_gt_values_block_size() {
+        let mut hash = default_level_hash("name");
+        let kv = "1"
+            .repeat(LevelHashIO::VALUES_BLOCK_SIZE_BYTES as usize / 2)
+            .into_bytes();
+        assert_eq!(
+            hash.io.meta.read().val_file_size,
+            LevelHashIO::VALUES_BLOCK_SIZE_BYTES
+        );
+
+        hash.insert(&kv, &kv).unwrap();
+
+        assert_eq!(
+            hash.io.meta.read().val_file_size,
+            LevelHashIO::VALUES_BLOCK_SIZE_BYTES * 2 + SIZE_U64
+        );
+    }
 }

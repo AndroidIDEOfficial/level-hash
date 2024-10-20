@@ -51,7 +51,6 @@ use crate::util::align_8;
 
 pub const LEVEL_VALUES_VERSION: u32 = 1;
 pub const LEVEL_KEYMAP_VERSION: u32 = 1;
-pub const VALUES_FILE_SIZE_DEFAULT: OffT = 512 * 1024;
 
 /// Helper for handling I/O for level hash.
 ///
@@ -272,9 +271,6 @@ impl LevelHashIO {
     pub const LEVEL_KEYMAP_EXT: &'static str = "._keymap";
     pub const LEVEL_INDEX_EXT: &'static str = ".index";
 
-    /// 1 Kilobyte.
-    const KB_1: u64 = 1024;
-
     /// The number of bytes it takes to store the magic number of the keymap/values file.
     pub const MAGIC_NUMBER_SIZE_BYTES: u64 = SIZE_U64;
 
@@ -285,7 +281,7 @@ impl LevelHashIO {
     pub const VALUES_HEADER_SIZE_BYTES: u64 = Self::MAGIC_NUMBER_SIZE_BYTES;
 
     /// The size of one segment region in the values file.
-    pub const VALUES_SEGMENT_SIZE_BYTES: u64 = 512 * 1024;
+    pub const VALUES_BLOCK_SIZE_BYTES: u64 = 512 * 1024;
 
     /// The number of bytes used to store the header of the keymap file.
     pub const KEYMAP_HEADER_SIZE_BYTES: u64 = Self::MAGIC_NUMBER_SIZE_BYTES;
@@ -435,7 +431,7 @@ impl LevelHashIO {
         new_value: &LevelValueT,
     ) -> LevelUpdateResult {
         // IMP: Update slot_addr only after writing the new value entry
-        
+
         let (slot_addr, val_addr) = self.slot_and_val_addr_at(level, bucket, slot);
         if val_addr.is_none() {
             return Err(LevelUpdateError::SlotEmpty);
@@ -507,8 +503,21 @@ impl LevelHashIO {
             val_file_size = meta.val_file_size;
         }
 
-        if this_val_addr + 4 * Self::KB_1 > val_file_size {
-            self.val_resize(this_val_addr - 1 + Self::VALUES_SEGMENT_SIZE_BYTES)
+        let key_len = key.len() as u32;
+        let val_len = value.len() as u32;
+
+        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + key_len as OffT + val_len as OffT;
+        assert!(entry_size <= u64::MAX as OffT);
+
+        {
+            let min_file_size = this_val_addr - 1 + entry_size;
+            let mut new_val_file_size = val_file_size;
+
+            while new_val_file_size <= min_file_size {
+                new_val_file_size += Self::VALUES_BLOCK_SIZE_BYTES;
+            }
+
+            self.val_resize(Self::val_real_offset(new_val_file_size))
                 .into_lvl_ins_err()?;
         }
 
@@ -522,18 +531,12 @@ impl LevelHashIO {
 
         let this_data = this_entry.data_mut();
 
-        let key_len = key.len() as u32;
-        let val_len = value.len() as u32;
-
         let key_off = this_entry_addr + ValuesEntry::OFF_KEY;
         self.values.write_at(key_off, key);
         this_data.key_size = key_len;
 
         self.values.write_at(key_off + key_len as OffT, value);
         this_data.value_size = val_len;
-
-        let entry_size = ValuesEntry::ENTRY_SIZE_MIN + key_len as OffT + val_len as OffT;
-        assert!(entry_size <= u64::MAX as OffT);
 
         // finally, current_tail = this_entry
         let meta = self.meta.write();
@@ -622,8 +625,8 @@ impl LevelHashIO {
         self.km_resize(Self::km_real_offset(km_size))?;
         self.km_deallocate(0, km_size);
 
-        self.val_resize(Self::val_real_offset(Self::VALUES_SEGMENT_SIZE_BYTES))?;
-        self.val_deallocate(0, Self::VALUES_SEGMENT_SIZE_BYTES);
+        self.val_resize(Self::val_real_offset(Self::VALUES_BLOCK_SIZE_BYTES))?;
+        self.val_deallocate(0, Self::VALUES_BLOCK_SIZE_BYTES);
 
         Ok(())
     }
